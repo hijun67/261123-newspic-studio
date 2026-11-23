@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>뉴스픽 스튜디오 — 미러링 · 4컷 · 카드뉴스 8장 · 6채널</title>
+<meta name="description" content="뉴스픽 파트너스 기사를 텍스트로 미러링하고, AI 4컷 만화·카드뉴스 8장·6개 SNS 업로드 패키지를 한 번에 만드는 개인 콘텐츠 제작 스튜디오.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a0c10">
+<meta property="og:title" content="뉴스픽 스튜디오">
+<meta property="og:description" content="미러링 → 4컷 → 카드뉴스 8장 → 6개 채널 업로드 패키지">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23ff6b3d'/%3E%3Cpath d='M18 46V18h7v10h14V18h7v28h-7V35H25v11z' fill='%230a0c10'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">본문으로</a>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="40" height="40"><rect width="64" height="64" rx="14" fill="#ff6b3d"/><path d="M18 46V18h7v10h14V18h7v28h-7V35H25v11z" fill="#0a0c10"/></svg>
+    </span>
+    <span class="brand-text">
+      <strong>뉴스픽 스튜디오</strong>
+      <small>미러링 · 4컷 · 카드뉴스 8장 · 6채널</small>
+    </span>
+  </div>
+  <div class="top-actions">
+    <label class="field inline" for="partnerCode">
+      <span>파트너 코드</span>
+      <input id="partnerCode" name="partnerCode" inputmode="numeric" placeholder="1234" autocomplete="off" aria-describedby="partnerHint">
+    </label>
+    <span id="storagePill" class="pill" title="아카이브 저장 위치">아카이브 확인 중…</span>
+    <button id="byokBtn" class="btn ghost" type="button">🔑 이미지 키</button>
+  </div>
+</header>
+
+<nav class="tabs" aria-label="스튜디오 단계">
+  <button class="tab active" data-tab="mirror" role="tab" aria-selected="true" aria-controls="tab-mirror"><span class="num">1</span>미러링 허브</button>
+  <button class="tab" data-tab="cuts" role="tab" aria-selected="false" aria-controls="tab-cuts"><span class="num">2</span>4컷 만화</button>
+  <button class="tab" data-tab="cards" role="tab" aria-selected="false" aria-controls="tab-cards"><span class="num">3</span>카드뉴스 8장</button>
+  <button class="tab" data-tab="channels" role="tab" aria-selected="false" aria-controls="tab-channels"><span class="num">4</span>6개 채널</button>
+</nav>
+
+<main id="main">
+  <!-- ============================ 1. 미러링 ============================ -->
+  <section id="tab-mirror" class="panel active" role="tabpanel" aria-labelledby="tab-mirror">
+    <div class="mirror-grid">
+      <div class="stack">
+        <article class="card">
+          <div class="card-head">
+            <h2>기사 주소로 텍스트 미러링</h2>
+            <span class="tiny">뉴스픽 · 파트너스</span>
+          </div>
+          <form id="mirrorForm" class="mirror-form" novalidate>
+            <label class="field grow" for="articleUrl">
+              <span class="sr-only">기사 주소</span>
+              <input id="articleUrl" name="articleUrl" type="url" inputmode="url" placeholder="https://www.newspic.kr/view.html?nid=..." autocomplete="off" required>
+            </label>
+            <button class="btn primary" id="mirrorBtn" type="submit">텍스트로 미러링</button>
+          </form>
+          <p id="partnerHint" class="hint">파트너 코드를 넣으면 저장되는 원문 링크에 <code>&amp;pn=</code> 이 자동으로 붙습니다.</p>
+
+          <div class="preset-block">
+            <span class="label">주소가 막히면 예시 기사로 먼저 확인</span>
+            <div id="presetRow" class="chip-row" role="group" aria-label="예시 기사"></div>
+            <button id="manualToggle" class="btn link" type="button" aria-expanded="false" aria-controls="manualBox">제목·본문 직접 붙여넣기</button>
+          </div>
+
+          <div id="manualBox" class="manual" hidden>
+            <label class="field" for="manualTitle"><span>제목</span><input id="manualTitle" placeholder="예: 전기요금 누진구간 완화"></label>
+            <label class="field" for="manualBody"><span>본문</span><textarea id="manualBody" rows="6" placeholder="기사 본문을 문단째 붙여넣으세요."></textarea></label>
+            <label class="field" for="manualUrl"><span>원문 주소 (선택)</span><input id="manualUrl" type="url" placeholder="https://www.newspic.kr/view.html?nid=..."></label>
+            <button id="manualSave" class="btn" type="button">직접 입력으로 아카이브 저장</button>
+          </div>
+
+          <p class="notice">개인 콘텐츠 제작을 위한 미러링·요약 허브입니다. 원문 저작권은 원작자에게 있으며, 게시 전 사실 확인이 필요합니다. 이 사이트는 검색엔진에 노출되지 않습니다(<code>noindex, nofollow</code>).</p>
+        </article>
+
+        <article id="readerCard" class="card reader" hidden>
+          <div class="reader-top">
+            <span id="readerSite" class="chip">뉴스픽</span>
+            <span id="readerDate" class="tiny"></span>
+            <span id="readerChars" class="tiny"></span>
+          </div>
+          <h2 id="readerTitle" class="reader-title"></h2>
+          <p id="readerSubtitle" class="reader-subtitle"></p>
+          <div class="reader-meta" id="readerMeta"></div>
+          <div class="reader-image-wrap" id="readerImageWrap" hidden>
+            <img id="readerImage" alt="기사 대표 이미지" referrerpolicy="no-referrer" loading="lazy">
+          </div>
+          <div id="readerBody" class="reader-body"></div>
+          <div class="row actions">
+            <button id="toCuts" class="btn primary" type="button">4컷 만화로 보내기 →</button>
+            <button id="toCards" class="btn" type="button">카드뉴스 8장으로 →</button>
+            <a id="readerPartner" class="btn ghost" href="#" target="_blank" rel="noopener">원문 파트너스 링크 ↗</a>
+          </div>
+        </article>
+
+        <div id="mirrorEmpty" class="card empty">
+          <div class="empty-art" aria-hidden="true">📰</div>
+          <h3>아직 미러링한 기사가 없습니다</h3>
+          <p>기사 주소를 넣거나 예시 기사를 눌러 보세요. 미러링한 기사는 이 브라우저의 작업 아카이브에 남습니다.</p>
+        </div>
+      </div>
+
+      <aside class="card archive" aria-label="작업 아카이브">
+        <div class="card-head">
+          <h2>작업 아카이브</h2>
+          <span id="archiveCount" class="tiny">0</span>
+        </div>
+        <label class="field search" for="archiveSearch">
+          <span class="sr-only">아카이브 검색</span>
+          <input id="archiveSearch" type="search" placeholder="제목·본문 검색" autocomplete="off">
+        </label>
+        <ul id="archiveList" class="archive-list"></ul>
+        <p id="archiveEmpty" class="hint">비어 있습니다. 미러링한 기사가 여기에 쌓입니다.</p>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============================ 2. 4컷 ============================ -->
+  <section id="tab-cuts" class="panel" role="tabpanel" aria-labelledby="tab-cuts" hidden>
+    <div id="cutsEmpty" class="card empty">
+      <div class="empty-art" aria-hidden="true">🎨</div>
+      <h3>먼저 기사를 미러링해 주세요</h3>
+      <p>1단계에서 기사를 저장하면 여기서 4컷 대본이 자동으로 만들어집니다.</p>
+      <button class="btn primary" type="button" data-goto="mirror">미러링 허브로</button>
+    </div>
+
+    <div id="cutsStudio" hidden>
+      <div class="studio-bar">
+        <div class="studio-title">
+          <span class="chip">4컷</span>
+          <strong id="cutsArticleTitle">—</strong>
+        </div>
+        <div class="studio-tools">
+          <div class="chip-row" id="styleRow" role="group" aria-label="그림 스타일"></div>
+          <div class="chip-row" id="layoutRow" role="group" aria-label="합본 배치"></div>
+        </div>
+      </div>
+
+      <div class="cuts-layout">
+        <div class="preview-card card">
+          <div class="card-head">
+            <h2>합본 미리보기</h2>
+            <span id="comicStatus" class="tiny">Canvas 폴백 아트</span>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="comicCanvas" width="2160" height="2700" aria-label="4컷 합본 미리보기"></canvas>
+          </div>
+          <div class="row wrap">
+            <button id="generateAll" class="btn primary" type="button">✨ AI 이미지 4컷 생성</button>
+            <button id="downloadSheet" class="btn" type="button">합본 PNG</button>
+            <button id="downloadCuts" class="btn" type="button">컷 4장 PNG</button>
+            <button id="resetImages" class="btn ghost" type="button">이미지 초기화</button>
+          </div>
+          <div class="progress" id="cutsProgress" hidden><div class="bar"></div><span>0%</span></div>
+          <p class="hint">AI 이미지는 무료 생성(Pollinations)을 먼저 시도하고, 실패하거나 오프라인이면 스타일별 Canvas 아트로 자동 대체됩니다. 이미지에는 글자가 들어가지 않습니다.</p>
+        </div>
+
+        <div class="cut-editors" id="cutsGrid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 3. 카드뉴스 ============================ -->
+  <section id="tab-cards" class="panel" role="tabpanel" aria-labelledby="tab-cards" hidden>
+    <div id="cardsEmpty" class="card empty">
+      <div class="empty-art" aria-hidden="true">🗂️</div>
+      <h3>기사를 먼저 미러링해 주세요</h3>
+      <p>8장 스토리보드가 자동으로 기획됩니다.</p>
+      <button class="btn primary" type="button" data-goto="mirror">미러링 허브로</button>
+    </div>
+
+    <div id="cardsStudio" hidden>
+      <div class="studio-bar">
+        <div class="studio-title">
+          <span class="chip">카드뉴스 8장</span>
+          <strong id="cardsArticleTitle">—</strong>
+        </div>
+        <div class="studio-tools">
+          <div class="chip-row" id="themeRow" role="group" aria-label="디자인 테마"></div>
+          <div class="chip-row" id="ratioRow" role="group" aria-label="비율"></div>
+        </div>
+      </div>
+
+      <div class="cards-layout">
+        <div class="slide-list card" id="slideList" aria-label="8장 슬라이드 목록"></div>
+        <div class="preview-card card">
+          <div class="card-head">
+            <h2 id="slideHeading">1장 · 표지</h2>
+            <span id="cardSize" class="tiny">1080×1350</span>
+          </div>
+          <div class="canvas-wrap card-canvas-wrap">
+            <canvas id="cardCanvas" width="1080" height="1350" aria-label="카드뉴스 미리보기"></canvas>
+          </div>
+          <div class="row wrap">
+            <button id="prevSlide" class="btn ghost" type="button">← 이전</button>
+            <button id="nextSlide" class="btn ghost" type="button">다음 →</button>
+            <button id="downloadCard" class="btn" type="button">이 카드 PNG</button>
+            <button id="downloadZip" class="btn primary" type="button">8장 ZIP 저장</button>
+          </div>
+          <label class="switch"><input id="useArticleImage" type="checkbox"> 표지에 기사 이미지 사용</label>
+        </div>
+        <div class="slide-editor card">
+          <div class="card-head"><h2>문구 편집</h2><span id="editorKind" class="tiny">표지</span></div>
+          <label class="field" for="cardKicker"><span>머리말(kicker)</span><input id="cardKicker" autocomplete="off"></label>
+          <label class="field" for="cardTitleInput"><span>제목</span><textarea id="cardTitleInput" rows="2"></textarea></label>
+          <label class="field" for="cardLines"><span>본문 · 한 줄에 하나씩</span><textarea id="cardLines" rows="6"></textarea></label>
+          <label class="field" for="cardFooter"><span>바닥 문구</span><input id="cardFooter" autocomplete="off"></label>
+          <button id="resetCard" class="btn ghost" type="button">이 카드 자동 문구로 되돌리기</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 4. 채널 ============================ -->
+  <section id="tab-channels" class="panel" role="tabpanel" aria-labelledby="tab-channels" hidden>
+    <div id="channelsEmpty" class="card empty">
+      <div class="empty-art" aria-hidden="true">📡</div>
+      <h3>기사를 먼저 미러링해 주세요</h3>
+      <p>6개 채널 문구와 영상 패키지가 자동으로 만들어집니다.</p>
+      <button class="btn primary" type="button" data-goto="mirror">미러링 허브로</button>
+    </div>
+
+    <div id="channelsStudio" hidden>
+      <div class="studio-bar">
+        <div class="studio-title">
+          <span class="chip">6개 채널</span>
+          <strong id="channelsArticleTitle">—</strong>
+        </div>
+        <div class="chip-row" id="platformRow" role="group" aria-label="플랫폼"></div>
+      </div>
+
+      <div class="channel-layout">
+        <div class="card channel-main">
+          <div class="card-head">
+            <h2 id="channelName">쓰레드</h2>
+            <span id="channelChars" class="tiny">0 / 500자</span>
+          </div>
+          <textarea id="channelBody" class="channel-body" rows="12" aria-label="채널 본문"></textarea>
+          <div class="row wrap">
+            <button id="copyBody" class="btn primary" type="button">본문 복사</button>
+            <button id="openIntent" class="btn" type="button">작성창 열기 ↗</button>
+            <button id="copyComment" class="btn" type="button">첫 댓글 링크 복사</button>
+            <button id="copyAll" class="btn ghost" type="button">본문+댓글 한번에 복사</button>
+          </div>
+          <div class="comment-box">
+            <span class="label">첫 댓글 / 고정 댓글</span>
+            <p id="channelComment">—</p>
+          </div>
+          <label class="field" for="channelTitleInput" id="channelTitleField" hidden>
+            <span>영상 제목</span>
+            <input id="channelTitleInput" autocomplete="off">
+          </label>
+          <p id="channelTips" class="hint"></p>
+        </div>
+
+        <div class="card channel-side">
+          <div class="card-head"><h2>업로드 순서</h2><span class="tiny">3단계</span></div>
+          <ol class="checklist" id="channelChecklist">
+            <li><span class="box"></span><div><strong>이미지 저장</strong><small>4컷 합본 또는 카드 8장을 내려받습니다.</small></div></li>
+            <li><span class="box"></span><div><strong>본문 붙여넣고 게시</strong><small>복사한 문구를 그대로 올립니다.</small></div></li>
+            <li><span class="box"></span><div><strong>첫 댓글에 원문 링크</strong><small>파트너스 링크를 고정합니다.</small></div></li>
+          </ol>
+          <div class="video-block">
+            <h3>9:16 슬라이드 영상</h3>
+            <p class="hint">카드뉴스 8장을 2.2초씩 넘기는 세로 영상(.webm)을 만듭니다. 틱톡·쇼츠에 그대로 올릴 수 있습니다.</p>
+            <button id="makeVideo" class="btn" type="button">🎬 슬라이드 영상 만들기</button>
+            <div class="progress" id="videoProgress" hidden><div class="bar"></div><span>0%</span></div>
+            <a id="videoDownload" class="btn ghost" href="#" download hidden>영상 저장 (.webm)</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>뉴스픽 스튜디오 · 개인 콘텐츠 제작 도구 · 미러링한 텍스트는 이 브라우저/내 KV 아카이브에만 보관됩니다.</p>
+  <p class="tiny">원문 저작권은 원작자에게 있습니다. 게시 전 사실 확인을 권합니다.</p>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="settingsDialog" class="dialog">
+  <form method="dialog" class="dialog-inner">
+    <div class="card-head"><h2>이미지 생성 설정 (BYOK)</h2><button class="btn ghost" value="close" aria-label="닫기" type="submit">✕</button></div>
+    <p class="hint">키는 <strong>이 브라우저에만</strong> 저장되고, 4컷 이미지를 만들 때 이 사이트의 함수로만 전송됩니다. 서버에 저장하지 않습니다.</p>
+    <label class="field" for="imageProvider"><span>이미지 엔진</span>
+      <select id="imageProvider">
+        <option value="free">무료 (Pollinations · 키 없음)</option>
+        <option value="openai">OpenAI (본인 키)</option>
+        <option value="gemini">Google Gemini (본인 키)</option>
+      </select>
+    </label>
+    <label class="field" for="openaiKey"><span>OpenAI API 키</span><input id="openaiKey" type="password" autocomplete="off" placeholder="sk-..."></label>
+    <label class="field" for="geminiKey"><span>Gemini API 키</span><input id="geminiKey" type="password" autocomplete="off" placeholder="AIza..."></label>
+    <label class="field" for="imageModel"><span>모델 (선택)</span><input id="imageModel" autocomplete="off" placeholder="gpt-image-1 / gemini-2.5-flash-image"></label>
+    <div class="row">
+      <button id="saveSettings" class="btn primary" type="button">저장</button>
+      <button id="clearKeys" class="btn ghost" type="button">키 삭제</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "newspic-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "뉴스픽 파트너스 기사 텍스트 미러링 + AI 4컷 + 카드뉴스 8장 + 6개 채널 업로드 패키지 (Cloudflare Pages)",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node /workspace/.local-tests/newspic-studio/test.js",
+    "ui": "LD_LIBRARY_PATH=/workspace/tmp-acs/libs /workspace/tmp/node/bin/node /workspace/.local-tests/newspic-studio/ui.test.js",
+    "live": "LD_LIBRARY_PATH=/workspace/tmp-acs/libs /workspace/tmp/node/bin/node /workspace/.local-tests/newspic-studio/live-shots.js",
+    "deploy": "node scripts/build.mjs && npx wrangler pages deploy dist --project-name newspic-studio --branch main"
+  }
+}

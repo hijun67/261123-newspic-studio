@@ -1,0 +1,14 @@
+# ============================================================
+# 뉴스픽 스튜디오 | Cloudflare Pages
+#  - 정적 자산: dist/ (node scripts/build.mjs)
+#  - Functions: functions/ 자동 인식
+#  - KV: newspic-studio-kv (아카이브). 바인딩이 없어도 브라우저 저장으로 폴백한다.
+#  - 배포: npx wrangler pages deploy dist --project-name newspic-studio --branch main
+# ============================================================
+name = "newspic-studio"
+compatibility_date = "2026-11-20"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "ARCHIVE"
+id = "__KV_ID_PLACEHOLDER__"
