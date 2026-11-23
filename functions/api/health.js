@@ -1,25 +1,42 @@
 /* /api/health — 배포 상태·기능 확인 */
+import { MAIN_CATEGORY_IDS } from "./feed.js";
+import { providers } from "./auth/_session.js";
+import { PARTNER_TRACKING, trackingFromEnv } from "./_lib.js";
+
 export async function onRequest(context) {
   const env = (context && context.env) || {};
+  const tracking = trackingFromEnv(env);
   const data = {
     ok: true,
     service: "newspic-studio",
-    version: "1.1.0",
+    version: "1.2.0",
     time: new Date().toISOString(),
     features: {
       mirror: true,
+      bodyImages: 8,
       kv: Boolean(env.ARCHIVE && typeof env.ARCHIVE.get === "function"),
       freeImage: true,
       workersAi: Boolean(env.AI && typeof env.AI.run === "function"),
       byok: ["openai", "gemini"],
       feed: true,
-      feedCategories: ["all", "economy", "tech", "society", "entertain", "sports"],
+      feedCategories: ["all", ...MAIN_CATEGORY_IDS],
+      feedCategoryCount: MAIN_CATEGORY_IDS.length,
+      feedLimit: 20,
+      partners: true,
+      partnersSeed: 20,
+      partnersTracking: tracking,
+      trackingDefault: PARTNER_TRACKING,
       cards: [4, 6, 8, 10],
       defaultCards: 8,
       cardLayouts: ["split", "full"],
+      cardTitleScale: 0.9,
+      cardBodyScale: 0.7,
       imageModes: ["ai", "article"],
       autoGenerate: true,
       channels: 6,
+      channelAccounts: true,
+      auth: true,
+      oauth: providers(env),
     },
   };
   return new Response(JSON.stringify(data), {

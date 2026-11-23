@@ -16,3 +16,9 @@ binding = "AI"
 [[kv_namespaces]]
 binding = "ARCHIVE"
 id = "86ffcbaf522844558e798e723ec2b33f"
+
+# 뉴스픽 파트너스 추적 파라미터 (한일 님 계정 기본값). 시크릿 아님 — 필요하면 대시보드에서 덮어쓸 수 있다.
+[vars]
+PARTNERS_LCP = "v9sIx86b"
+PARTNERS_CP = "H0cKa48w"
+PARTNERS_UTM = "np260905v9sIx86b"

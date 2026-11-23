@@ -5,20 +5,27 @@ import {
   CARD_COUNTS,
   CARD_KIND_LABELS,
   IMAGE_MODES,
+  PARTNER_TRACKING,
   PLATFORMS,
   STYLES,
+  applyAccounts,
   buildCards,
   buildChannels,
   buildHashtags,
   buildStoryboard,
   buildZip,
   cutPrompt,
+  extractKeywords,
+  finishSentence,
+  keywordPromptLine,
+  normalizeAccount,
   partnerLinkFor,
+  shortTitle,
   isNoiseLine,
   shorten,
 } from "./plan.js";
 import { loadImage, renderCutCanvas, renderSheet, styleTheme } from "./canvas.js";
-import { canvasToBytes, ratioInfo, renderCardCanvas } from "./cards.js";
+import { CARD_SCALES, canvasToBytes, ratioInfo, renderCardCanvas } from "./cards.js";
 import { recordSlideshow, videoSupported } from "./video.js";
 
 const LS = {
@@ -26,6 +33,8 @@ const LS = {
   byok: "newspic-studio:byok",
   archive: "newspic-studio:archive",
   last: "newspic-studio:last-article",
+  accounts: "newspic-studio:accounts",
+  guest: "newspic-studio:guest",
 };
 
 const KIND_LABEL = {
@@ -43,13 +52,14 @@ const KIND_LABEL = {
 
 const state = {
   article: null,
+  articleImages: [],
   cuts: [],
   cards: [],
   baseCards: [],
   channels: {},
   activePlatform: "threads",
   style: "photo",
-  imageMode: "ai",
+  imageMode: "article",
   layout: "grid",
   cardTheme: "magazine",
   cardCount: 8,
@@ -65,7 +75,19 @@ const state = {
   byok: { provider: "free", openai: "", gemini: "", model: "" },
   slideshowUrl: "",
   selectedChannels: ["threads", "instagram", "facebook", "x", "tiktok"],
-  feed: { category: "all", items: [], loading: false, fallback: false, loaded: false, error: "" },
+  accounts: {},
+  auth: {
+    checked: false,
+    authenticated: false,
+    mode: "anonymous",
+    user: null,
+    providers: {},
+    oauthConfigured: false,
+    storage: "none",
+    message: "",
+  },
+  keywordOff: [],
+  feed: { category: "all", items: [], loading: false, fallback: false, loaded: false, error: "", partners: false },
   auto: {
     enabled: false,
     minutes: 5,
@@ -362,11 +384,17 @@ async function deleteArchivedArticle(id) {
 
 const FEED_CATEGORY_LABELS = {
   all: "전체",
-  economy: "경제",
-  tech: "IT/테크",
+  economy: "경제·금융",
+  tech: "IT·AI",
   society: "사회",
-  entertain: "연예/이슈",
+  politics: "정치",
+  entertain: "연예·방송",
   sports: "스포츠",
+  health: "건강·의학",
+  life: "라이프·생활",
+  realestate: "부동산·재테크",
+  global: "글로벌·국제",
+  partners: "💰 파트너스 고수익",
 };
 
 function renderFeedCategories() {
@@ -442,6 +470,12 @@ function renderFeedList() {
 
     const meta = document.createElement("div");
     meta.className = "feed-meta";
+    if (item.rank) {
+      const rank = document.createElement("span");
+      rank.className = "feed-rank";
+      rank.textContent = item.rank + "위";
+      meta.appendChild(rank);
+    }
     const site = document.createElement("span");
     site.textContent = item.site || "뉴스";
     meta.appendChild(site);
@@ -452,6 +486,12 @@ function renderFeedList() {
       const time = document.createElement("span");
       time.textContent = date;
       meta.append(dot, time);
+    }
+    if (item.hot) {
+      const badge = document.createElement("span");
+      badge.className = "feed-badge hot";
+      badge.textContent = "💰 고수익";
+      meta.appendChild(badge);
     }
     if (item.isFallback) {
       const badge = document.createElement("span");
@@ -487,19 +527,26 @@ async function loadFeed(category = state.feed.category) {
     const query =
       "/api/feed?category=" +
       encodeURIComponent(state.feed.category) +
-      "&limit=12&pn=" +
+      "&limit=20&pn=" +
       encodeURIComponent(state.partnerCode || "");
     const result = await api(query);
     const data = result.data || {};
     if (data.ok && Array.isArray(data.items)) {
       state.feed.items = data.items;
       state.feed.fallback = Boolean(data.fallback);
+      state.feed.partners = state.feed.category === "partners";
       state.feed.error = "";
       state.feed.loaded = true;
       if (status) {
-        status.textContent = data.fallback
-          ? `큐레이션 ${data.items.length}건`
-          : `실시간 ${data.items.length}건 · 5분 캐시`;
+        if (state.feed.category === "partners") {
+          status.textContent = data.linked
+            ? `파트너스 고수익 ${data.items.length}건 · ${data.source === "kv" ? "KV 최신" : "시드"}`
+            : `고수익형 큐레이션 ${data.items.length}건 · 파트너스 미연동`;
+        } else if (data.fallback) {
+          status.textContent = `큐레이션 ${data.items.length}건`;
+        } else {
+          status.textContent = `실시간 ${data.items.length}건 · 5분 캐시`;
+        }
       }
     } else {
       throw new Error("bad feed");
@@ -576,22 +623,43 @@ function partnerUrlNow(article = state.article) {
 async function setArticle(article, { fromArchive = false } = {}) {
   state.article = article;
   state.article.partnerUrl = partnerUrlNow(article);
-  const storyboard = buildStoryboard(state.article, { partnerUrl: state.article.partnerUrl, cardCount: state.cardCount });
+  const storyboard = buildStoryboard(state.article, {
+    partnerUrl: state.article.partnerUrl,
+    cardCount: state.cardCount,
+    accounts: state.accounts,
+  });
   state.cuts = storyboard.cuts;
   state.baseCards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
   state.cards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
   state.channels = storyboard.channels;
+  state.articleImages = collectArticleImages(state.article);
   state.activeCard = 0;
   state.images = {};
   state.imageMeta = {};
   state.articleImageEl = null;
   state.slideshowUrl = "";
+  state.keywordOff = [];
   writeJson(LS.last, state.article);
 
   renderReader();
   renderWorkspace();
   await loadArticleImage();
   if (!fromArchive) await refreshArchive($("archiveSearch").value || "");
+}
+
+/** 기사 본문 이미지 목록 (대표 이미지 포함 최대 8장) */
+function collectArticleImages(article) {
+  const out = [];
+  const push = (url) => {
+    if (!url || !/^https?:/i.test(url)) return;
+    if (out.includes(url)) return;
+    out.push(url);
+  };
+  if (!article) return out;
+  push(article.image);
+  for (const url of article.bodyImages || []) push(url);
+  for (const url of article.images || []) push(url);
+  return out.slice(0, 8);
 }
 
 function renderWorkspace() {
@@ -611,6 +679,8 @@ function renderWorkspace() {
   $("channelsArticleTitle").textContent = state.article.title;
 
   renderChips();
+  renderKeywords();
+  renderArticleImages();
   renderCuts();
   renderComic();
   renderSlideList();
@@ -620,7 +690,410 @@ function renderWorkspace() {
   renderChannelSelection();
   renderChannel();
   renderChannelPackages();
+  renderAutofillBadge();
   document.body.dataset.articleId = state.article.id;
+}
+
+/* ------------------------------------------------------------------ *
+ * 제목 키워드 · 기사 본문 이미지 (4컷)
+ * ------------------------------------------------------------------ */
+
+function activeKeywordPrompt() {
+  const keys = (state.keywordKeys || []).filter((key) => !state.keywordOff.includes(key.ko)).slice(0, 4);
+  if (!keys.length) return "";
+  const parts = keys.map((key) => (key.en ? `${key.en} (${key.ko})` : key.ko));
+  return "key subject: " + parts.join(", ");
+}
+
+function renderKeywords() {
+  const row = $("keywordRow");
+  if (!row) return;
+  row.textContent = "";
+  if (!state.article) {
+    state.keywordKeys = [];
+    return;
+  }
+  state.keywordKeys = extractKeywords(state.article, 6);
+  for (const key of state.keywordKeys) {
+    const off = state.keywordOff.includes(key.ko);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip keyword" + (off ? "" : " active");
+    button.dataset.keyword = key.ko;
+    button.title = key.en ? `${key.ko} · ${key.en}` : key.ko;
+    button.textContent = (key.en ? "🔑 " : "") + key.ko;
+    row.appendChild(button);
+  }
+  const note = document.createElement("span");
+  note.className = "chip static";
+  note.textContent = state.keywordKeys.length ? "제목 키워드 → 이미지 프롬프트 최우선" : "키워드 없음";
+  row.appendChild(note);
+}
+
+function toggleKeyword(keyword) {
+  if (!keyword) return;
+  if (state.keywordOff.includes(keyword)) state.keywordOff = state.keywordOff.filter((item) => item !== keyword);
+  else state.keywordOff.push(keyword);
+  const prompt = activeKeywordPrompt();
+  for (const cut of state.cuts) {
+    cut.keywordPrompt = prompt;
+    cut.aiPrompt = cutPrompt(cut, state.style, state.article);
+  }
+  renderKeywords();
+  renderCuts();
+  toast(prompt ? `프롬프트 키워드: ${prompt.replace(/^key subject: /, "")}` : "키워드를 모두 껐습니다. 장면 설명만 씁니다.", "ok");
+}
+
+function renderArticleImages() {
+  const panel = $("articleImagePanel");
+  const list = $("articleImageList");
+  if (!panel || !list) return;
+  list.textContent = "";
+  const images = state.articleImages || [];
+  panel.hidden = !images.length;
+  const note = $("articleImageNote");
+  if (note) note.textContent = images.length ? `${images.length}장 · 최대 8장` : "—";
+  images.forEach((url, index) => {
+    const li = document.createElement("li");
+    li.className = "article-image-item";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = `기사 이미지 ${index + 1}`;
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.addEventListener("error", () => img.classList.add("broken"));
+    const tools = document.createElement("div");
+    tools.className = "article-image-tools";
+    for (let cut = 1; cut <= 4; cut += 1) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "mini-btn";
+      button.dataset.imageIndex = String(index);
+      button.dataset.cutIndex = String(cut);
+      button.textContent = cut + "컷";
+      tools.appendChild(button);
+    }
+    li.append(img, tools);
+    list.appendChild(li);
+  });
+}
+
+async function assignArticleImage(imageIndex, cutIndex) {
+  const url = (state.articleImages || [])[imageIndex];
+  const cut = state.cuts[cutIndex - 1];
+  if (!url || !cut) return;
+  const image = await proxyArticleImage(url);
+  if (!image) {
+    toast("이미지를 불러오지 못했습니다. 다른 이미지를 골라 주세요.", "err");
+    return;
+  }
+  state.images[cut.index] = image;
+  state.imageMeta[cut.index] = { mode: "article", url };
+  updateCutImageState(cut.index, true, "기사 이미지");
+  renderComic();
+  toast(`기사 이미지 ${imageIndex + 1}번을 ${cutIndex}컷에 넣었습니다.`, "ok");
+}
+
+async function assignImagesInOrder() {
+  const urls = (state.articleImages || []).slice(0, 4);
+  if (!urls.length) {
+    toast("기사 본문 이미지가 없습니다.", "err");
+    return;
+  }
+  const progress = $("cutsProgress");
+  let filled = 0;
+  for (let i = 0; i < urls.length; i += 1) {
+    const cut = state.cuts[i];
+    if (!cut) break;
+    const image = await proxyArticleImage(urls[i]);
+    if (!image) continue;
+    state.images[cut.index] = image;
+    state.imageMeta[cut.index] = { mode: "article", url: urls[i] };
+    updateCutImageState(cut.index, true, "기사 이미지");
+    filled += 1;
+    setProgress(progress, filled / Math.max(urls.length, 1));
+  }
+  setProgress(progress, 1, false);
+  renderComic();
+  toast(filled ? `기사 이미지 ${filled}장을 순서대로 컷에 넣었습니다.` : "이미지를 불러오지 못했습니다.", filled ? "ok" : "err");
+}
+
+/* ------------------------------------------------------------------ *
+ * 로그인 / 회원가입 (구글 · 네이버 · 카카오 · 게스트)
+ * ------------------------------------------------------------------ */
+
+function renderAuth() {
+  const button = $("authBtn");
+  const pill = $("authPill");
+  if (!button || !pill) return;
+  const auth = state.auth;
+  if (auth.authenticated && auth.user) {
+    button.textContent = `${auth.user.guest ? "게스트" : auth.user.name || "회원"} · 계정`;
+    pill.hidden = false;
+    pill.textContent = auth.mode === "guest" ? "게스트 세션 · KV" : `${auth.user.provider} 로그인`;
+    pill.className = "pill";
+  } else {
+    button.textContent = "로그인 / 회원가입";
+    pill.hidden = true;
+  }
+  const status = $("authStatus");
+  if (status) {
+    const providers = auth.providers || {};
+    const ready = [providers.google ? "구글" : "", providers.naver ? "네이버" : "", providers.kakao ? "카카오" : ""].filter(Boolean);
+    status.textContent = auth.authenticated
+      ? `${auth.mode === "guest" ? "게스트" : "회원"} 세션 · 채널 계정 ${Object.keys(state.accounts || {}).length}개 저장소: ${auth.authenticated ? (auth.storage === "kv" ? "KV" : "브라우저") : "브라우저"}`
+      : ready.length
+        ? `사용 가능한 로그인: ${ready.join(" · ")}`
+        : "OAuth 키 등록 대기 중 — 지금은 게스트로 계속할 수 있어요(브라우저 저장).";
+  }
+  const note = $("authNote");
+  if (note) {
+    note.textContent = auth.oauthConfigured
+      ? "구글·네이버·카카오 계정으로 로그인하면 채널 계정 6개가 회원 KV에 저장됩니다."
+      : "OAuth 키 등록 대기 중입니다. 게스트로 계속하면 이 브라우저에 저장되고, 키를 등록하는 즉시 같은 화면에서 로그인할 수 있어요.";
+  }
+  for (const button of $$("[data-login]")) {
+    const provider = button.dataset.login;
+    const configured = Boolean((auth.providers || {})[provider]);
+    button.classList.toggle("pending", !configured);
+    button.title = configured ? "" : "OAuth 키 등록 대기 중";
+  }
+}
+
+function openAuthDialog(message) {
+  renderAuth();
+  const status = $("authStatus");
+  if (status && message) status.textContent = message;
+  const dialog = $("authDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+async function loadAuth() {
+  try {
+    const result = await api("/api/auth/me");
+    const data = result.data || {};
+    state.auth.checked = true;
+    state.auth.providers = data.providers || {};
+    state.auth.oauthConfigured = Boolean(data.oauthConfigured);
+    state.auth.storage = data.storage || "none";
+    state.auth.message = data.message || "";
+    if (data.authenticated && data.user) {
+      state.auth.authenticated = true;
+      state.auth.mode = data.mode || "member";
+      state.auth.user = data.user;
+      const remote = data.accounts && Object.keys(data.accounts).length ? data.accounts : null;
+      if (remote) {
+        state.accounts = { ...readJson(LS.accounts, {}), ...remote };
+        writeJson(LS.accounts, state.accounts);
+      } else {
+        const local = readJson(LS.accounts, {});
+        state.accounts = local;
+        if (Object.keys(local).length) {
+          api("/api/account", { method: "PUT", body: JSON.stringify({ accounts: local }) }).catch(() => {});
+        }
+      }
+    } else {
+      state.auth.authenticated = false;
+      state.auth.mode = readJson(LS.guest, false) ? "guest-local" : "anonymous";
+      state.auth.user = null;
+      state.accounts = readJson(LS.accounts, {});
+    }
+  } catch (e) {
+    state.auth.checked = true;
+    state.auth.authenticated = false;
+    state.auth.mode = "guest-local";
+    state.accounts = readJson(LS.accounts, {});
+  }
+  renderAuth();
+  renderAccounts();
+  applyAccountsToChannels();
+}
+
+function loginWith(provider) {
+  if (!provider) return;
+  if (!(state.auth.providers || {})[provider]) {
+    openAuthDialog("OAuth 키 등록 대기 중 — 이 제공자의 클라이언트 키가 아직 없습니다. 게스트로 계속할 수 있어요.");
+    return;
+  }
+  const dialog = $("authDialog");
+  if (dialog && dialog.open) dialog.close();
+  location.href = `/api/auth/${provider}`;
+}
+
+async function continueAsGuest() {
+  writeJson(LS.guest, true);
+  let mode = "guest-local";
+  let message = "게스트 모드 — 채널 계정을 이 브라우저에 저장합니다.";
+  try {
+    const result = await api("/api/auth/guest", { method: "POST", body: JSON.stringify({}) });
+    const data = result.data || {};
+    if (data.authenticated && data.mode === "guest") {
+      mode = "guest";
+      message = "게스트 세션 시작 — 채널 계정을 게스트 KV에 저장합니다.";
+      state.auth.authenticated = true;
+      state.auth.user = data.user;
+      state.auth.mode = "guest";
+      state.auth.storage = data.storage || "none";
+      state.auth.providers = data.providers || state.auth.providers;
+      const local = readJson(LS.accounts, {});
+      if (Object.keys(local).length) await api("/api/account", { method: "PUT", body: JSON.stringify({ accounts: local }) }).catch(() => {});
+    } else if (data.message) {
+      message = data.message;
+    }
+  } catch (e) {
+    /* 오프라인이면 브라우저 저장 */
+  }
+  state.auth.mode = mode;
+  const dialog = $("authDialog");
+  if (dialog && dialog.open) dialog.close();
+  renderAuth();
+  renderAccounts();
+  toast(message, "ok");
+}
+
+async function logoutUser() {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+  } catch (e) {
+    /* 무시 */
+  }
+  writeJson(LS.guest, false);
+  state.auth.authenticated = false;
+  state.auth.mode = "anonymous";
+  state.auth.user = null;
+  const dialog = $("authDialog");
+  if (dialog && dialog.open) dialog.close();
+  renderAuth();
+  renderAccounts();
+  toast("로그아웃했습니다. 채널 계정은 이 브라우저에 남아 있어요.", "ok");
+}
+
+/* ------------------------------------------------------------------ *
+ * 채널 계정 (6개) 저장 · 자동입력
+ * ------------------------------------------------------------------ */
+
+function savedAccountCount() {
+  return PLATFORMS.filter((platform) => normalizeAccount((state.accounts || {})[platform.id]).handle).length;
+}
+
+function renderAutofillBadge() {
+  const badge = $("autofillBadge");
+  if (badge) {
+    const count = savedAccountCount();
+    badge.textContent = count
+      ? `⚡ 저장된 계정 일괄 자동입력 · ${count}/${PLATFORMS.length}`
+      : "⚡ 저장된 계정 없음 · 채널 탭에서 입력";
+    badge.className = "pill" + (count ? "" : " local");
+    badge.title = count ? "본문·해시태그·서명·인쟌트 URL에 자동으로 채워집니다." : "채널 탭에서 6개 계정을 입력해 저장하세요.";
+  }
+  const storage = $("accountStorage");
+  if (storage) {
+    storage.textContent = state.auth.authenticated
+      ? state.auth.mode === "guest"
+        ? "게스트 KV 저장"
+        : "회원 KV 저장"
+      : "브라우저(localStorage) 저장";
+  }
+}
+
+function renderAccounts() {
+  const grid = $("accountGrid");
+  if (!grid) return;
+  grid.textContent = "";
+  for (const platform of PLATFORMS) {
+    const account = normalizeAccount((state.accounts || {})[platform.id]);
+    const card = document.createElement("div");
+    card.className = "account-row";
+    card.dataset.accountPlatform = platform.id;
+    const head = document.createElement("div");
+    head.className = "account-row-head";
+    const name = document.createElement("strong");
+    name.textContent = `${platform.emoji} ${platform.name}`;
+    const flag = document.createElement("span");
+    flag.className = "tiny";
+    flag.textContent = account.handle ? "저장됨" : "미입력";
+    head.append(name, flag);
+
+    const fields = document.createElement("div");
+    fields.className = "account-fields";
+    const addField = (label, key, placeholder) => {
+      const wrap = document.createElement("label");
+      wrap.className = "field";
+      const span = document.createElement("span");
+      span.textContent = label;
+      const input = document.createElement("input");
+      input.dataset.accountField = key;
+      input.dataset.accountPlatform = platform.id;
+      input.value = account[key] || "";
+      input.placeholder = placeholder;
+      input.autocomplete = "off";
+      wrap.append(span, input);
+      return wrap;
+    };
+    fields.append(
+      addField("아이디(@handle)", "handle", "@myhandle"),
+      addField("연동 메모", "memo", "예: 업로드는 밤 9시"),
+      addField("웹훅 URL", "webhook", "https://…"),
+      addField("토큰(선택)", "token", "액세스 토큰")
+    );
+    card.append(head, fields);
+    grid.appendChild(card);
+  }
+  renderAutofillBadge();
+}
+
+function collectAccounts() {
+  const out = {};
+  for (const platform of PLATFORMS) {
+    const row = document.querySelector(`[data-account-platform="${platform.id}"]`);
+    const entry = {};
+    for (const key of ["handle", "memo", "webhook", "token"]) {
+      const input = row ? row.querySelector(`[data-account-field="${key}"]`) : null;
+      entry[key] = input ? input.value.trim() : "";
+    }
+    const normalized = normalizeAccount(entry);
+    if (normalized.handle || normalized.memo || normalized.webhook || normalized.token) out[platform.id] = normalized;
+  }
+  return out;
+}
+
+async function saveAccounts() {
+  const accounts = collectAccounts();
+  state.accounts = accounts;
+  writeJson(LS.accounts, accounts);
+  let savedTo = "브라우저";
+  if (state.auth.authenticated) {
+    const result = await api("/api/account", { method: "PUT", body: JSON.stringify({ accounts }) });
+    if (result.data && result.data.ok) savedTo = state.auth.mode === "guest" ? "게스트 KV" : "회원 KV";
+  }
+  renderAccounts();
+  applyAccountsToChannels();
+  toast(`채널 계정 ${savedAccountCount()}개를 ${savedTo}에 저장하고 자동입력했습니다.`, "ok");
+}
+
+function applyAccountsToChannels({ silent = false } = {}) {
+  renderAutofillBadge();
+  if (!state.channels || !Object.keys(state.channels).length) return;
+  applyAccounts(state.channels, state.accounts);
+  if (state.article) {
+    renderChannel();
+    renderChannelPackages();
+  }
+  if (!silent) toast(`저장된 계정 ${savedAccountCount()}개를 6개 채널에 자동입력했습니다.`, "ok");
+}
+
+function goToChannels() {
+  if (!state.article) {
+    toast("먼저 기사를 골라 주세요.", "err");
+    return;
+  }
+  const partnerUrl = partnerUrlNow();
+  state.channels = buildChannels(state.article, state.cards, partnerUrl, { accounts: state.accounts });
+  renderPlatformTabs();
+  renderChannelSelection();
+  applyAccountsToChannels({ silent: true });
+  showTab("channels");
+  toast("완성본을 가지고 4단계 채널로 이동했습니다.", "ok");
 }
 
 function renderReader() {
@@ -1128,6 +1601,7 @@ async function applyArticleImages({ aiFill = false, progress = null } = {}) {
     if (url && /^https?:/i.test(url) && !urls.includes(url)) urls.push(url);
   };
   push(article.image);
+  for (const url of article.bodyImages || []) push(url);
   for (const url of article.images || []) push(url);
 
   let filled = 0;
@@ -1295,7 +1769,7 @@ function renderCardPreview() {
 function rebuildCards() {
   if (!state.article) return;
   const partnerUrl = partnerUrlNow();
-  const storyboard = buildStoryboard(state.article, { partnerUrl, cardCount: state.cardCount });
+  const storyboard = buildStoryboard(state.article, { partnerUrl, cardCount: state.cardCount, accounts: state.accounts });
   state.baseCards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
   state.cards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
   state.channels = storyboard.channels;
@@ -1325,7 +1799,7 @@ function updateCardFromInputs() {
 function refreshChannelsFromCards() {
   if (!state.article) return;
   const partnerUrl = partnerUrlNow();
-  state.channels = buildChannels(state.article, state.cards, partnerUrl);
+  state.channels = buildChannels(state.article, state.cards, partnerUrl, { accounts: state.accounts });
   if ($("channelBody")) renderChannel();
 }
 
@@ -1410,10 +1884,32 @@ function currentChannel() {
   return state.channels[state.activePlatform] || null;
 }
 
+/** 인텐트 URL에 본문과 계정(@via)을 붙인다. */
+function openIntentFor(pack, body) {
+  if (!pack) return;
+  if (pack.id === "instagram" || pack.id === "facebook") {
+    if (pack.shareUrl) window.open(pack.shareUrl, "_blank", "noopener");
+    else toast("인스타·페이스북은 앱에서 이미지를 올린 뒤 본문을 붙여넣어 주세요.");
+    return;
+  }
+  if (!pack.intentUrl) return;
+  let url = pack.intentUrl + encodeURIComponent(body || "");
+  if (pack.via && pack.id === "x") url += "&via=" + encodeURIComponent(pack.via);
+  window.open(url, "_blank", "noopener");
+}
+
 function renderChannel() {
   const pack = currentChannel();
   if (!pack) return;
   $("channelName").textContent = `${pack.emoji} ${pack.name}`;
+  const account = pack.account || normalizeAccount((state.accounts || {})[state.activePlatform]);
+  const accountNode = $("channelAccount");
+  if (accountNode) {
+    accountNode.textContent = account.handle
+      ? `${account.handle}${account.webhook ? " · 웹훅" : ""}${account.token ? " · 토큰" : ""}`
+      : "계정 미입력";
+    accountNode.title = account.memo || "";
+  }
   $("channelBody").value = pack.body || "";
   updateChannelChars();
   $("channelComment").textContent = pack.firstComment || "—";
@@ -1496,6 +1992,12 @@ function renderChannelPackages() {
     chars.className = "tiny";
     chars.textContent = `${(pack.body || "").length} / ${pack.limit}자`;
     head.append(name, chars);
+    if (pack.account && pack.account.handle) {
+      const account = document.createElement("span");
+      account.className = "feed-badge partner package-account";
+      account.textContent = pack.account.handle;
+      head.appendChild(account);
+    }
     card.appendChild(head);
 
     const body = document.createElement("p");
@@ -1521,6 +2023,7 @@ function renderChannelPackages() {
     add("본문 복사", "copy-body");
     add("첫 댓글 링크", "copy-comment");
     add("해시태그", "copy-tags");
+    if (pack.accountUrl) add("계정 열기 ↗", "account");
     if (pack.intentUrl || pack.shareUrl) add("작성창 열기 ↗", "open", true);
     add("카드 ZIP", "zip");
     if (pack.id === "tiktok" || pack.id === "youtube") add("영상 만들기", "video");
@@ -1535,13 +2038,17 @@ async function handlePackageAction(action, platformId) {
   if (action === "copy-body") return copyText(pack.body || "", "본문을 복사했습니다.");
   if (action === "copy-comment") return copyText(pack.firstComment || "", "첫 댓글 링크를 복사했습니다.");
   if (action === "copy-tags") return copyText((pack.hashtags || []).join(" "), "해시태그를 복사했습니다.");
+  if (action === "account") {
+    if (pack.accountUrl) window.open(pack.accountUrl, "_blank", "noopener");
+    return;
+  }
   if (action === "open") {
     if (pack.id === "instagram" || pack.id === "facebook") {
       if (pack.shareUrl) window.open(pack.shareUrl, "_blank", "noopener");
       else toast("인스타·페이스북은 앱에서 이미지를 올린 뒤 본문을 붙여넣어 주세요.");
       return;
     }
-    if (pack.intentUrl) window.open(pack.intentUrl + encodeURIComponent(pack.body || ""), "_blank", "noopener");
+    openIntentFor(pack, pack.body || "");
     return;
   }
   if (action === "zip") return downloadCardsZip();
@@ -1917,7 +2424,7 @@ function loadSettings() {
   const prefs = readJson(LS.prefs, {});
   state.partnerCode = prefs.partnerCode || "";
   state.style = prefs.style || "photo";
-  state.imageMode = prefs.imageMode === "article" ? "article" : "ai";
+  state.imageMode = prefs.imageMode === "ai" ? "ai" : "article";
   state.layout = prefs.layout || "grid";
   state.cardTheme = prefs.cardTheme || "magazine";
   state.cardCount = CARD_COUNTS.includes(Number(prefs.cardCount)) ? Number(prefs.cardCount) : 8;
@@ -2124,6 +2631,30 @@ function bindEvents() {
   });
 
   $("generateAll").addEventListener("click", generateAllImages);
+  $("keywordRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-keyword]");
+    if (button) toggleKeyword(button.dataset.keyword);
+  });
+  $("articleImageList").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-image-index]");
+    if (!button) return;
+    assignArticleImage(Number(button.dataset.imageIndex), Number(button.dataset.cutIndex));
+  });
+  $("assignImagesInOrder").addEventListener("click", assignImagesInOrder);
+  [$("cutsToChannel"), $("cutsToChannelBottom"), $("cardsToChannel"), $("cardsToChannelBottom")]
+    .filter(Boolean)
+    .forEach((button) => button.addEventListener("click", goToChannels));
+  $("saveAccounts").addEventListener("click", saveAccounts);
+  $("applyAccountsBtn").addEventListener("click", () => applyAccountsToChannels());
+  $("authBtn").addEventListener("click", () => openAuthDialog());
+  $("guestBtn").addEventListener("click", continueAsGuest);
+  $("logoutBtn").addEventListener("click", logoutUser);
+  $$("[data-login]").forEach((button) =>
+    button.addEventListener("click", () => loginWith(button.dataset.login))
+  );
+  $("authDialog").addEventListener("click", (event) => {
+    if (event.target === $("authDialog")) $("authDialog").close();
+  });
   $("resetImages").addEventListener("click", () => {
     state.images = {};
     state.imageMeta = {};
@@ -2214,12 +2745,7 @@ function bindEvents() {
   $("openIntent").addEventListener("click", () => {
     const pack = currentChannel();
     if (!pack) return;
-    if (pack.id === "instagram" || pack.id === "facebook") {
-      if (pack.shareUrl) window.open(pack.shareUrl, "_blank", "noopener");
-      else toast("인스타·페이스북은 앱에서 이미지를 올린 뒤 본문을 붙여넣어 주세요.");
-      return;
-    }
-    if (pack.intentUrl) window.open(pack.intentUrl + encodeURIComponent($("channelBody").value), "_blank", "noopener");
+    openIntentFor(pack, $("channelBody").value);
   });
   $("channelChecklist").addEventListener("click", (event) => {
     const item = event.target.closest("li");
@@ -2354,6 +2880,24 @@ async function init() {
   renderAuto();
   renderFeedCategories();
   renderChannelSelection();
+  renderAccounts();
+  await loadAuth();
+
+  const gen = $("generateAll");
+  if (gen) gen.textContent = state.imageMode === "article" ? "🖼️ 기사 이미지로 4컷 구성" : "✨ AI 이미지 4컷 생성";
+
+  const params = new URLSearchParams(location.search);
+  const loginState = params.get("login");
+  if (loginState) {
+    const provider = params.get("provider") || "";
+    if (loginState === "ok") toast("로그인했습니다. 채널 계정이 회원 KV에 저장됩니다.", "ok");
+    else if (loginState === "oauth_pending") openAuthDialog(`OAuth 키 등록 대기 중 — ${provider || "이"} 로그인 키가 아직 없습니다. 게스트로 계속할 수 있어요.`);
+    else toast(`로그인을 마치지 못했습니다 (${loginState}). 게스트로도 계속할 수 있어요.`, "err");
+    params.delete("login");
+    params.delete("provider");
+    const clean = location.pathname + (params.toString() ? "?" + params.toString() : "") + location.hash;
+    history.replaceState(null, "", clean);
+  }
   await loadFeed(state.feed.category);
 
   const hash = location.hash.replace("#", "");
@@ -2387,6 +2931,20 @@ async function init() {
     recordSlideshow,
     buildZip,
     buildCards,
+    extractKeywords,
+    keywordPromptLine,
+    activeKeywordPrompt,
+    goToChannels,
+    saveAccounts,
+    applyAccountsToChannels,
+    continueAsGuest,
+    loginWith,
+    logoutUser,
+    assignArticleImage,
+    assignImagesInOrder,
+    renderAccounts,
+    cardsScales: CARD_SCALES,
+    cardScales: CARD_SCALES,
   };
 }
 

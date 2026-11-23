@@ -1,14 +1,15 @@
 {
   "name": "newspic-studio",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
-  "description": "뉴스픽 스튜디오 — 분류 피드 + 텍스트 미러링 + AI 4컷(2모드) + 카드뉴스 4·6·8·10장(분할 레이아웃) + 채널 다중 선택 + 분 단위 자동 생성 (Cloudflare Pages)",
+  "description": "뉴스픽 스튜디오 — 10개 분류·분류당 20건 피드 + 파트너스 고수익 20건 + 미러링 + AI 4컷(본문 이미지·제목 키워드) + 카드뉴스 4·6·8·10장 + 6개 채널 계정 자동입력 + 구글·네이버·카카오 로그인 (Cloudflare Pages)",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node /workspace/.local-tests/newspic-studio/test.js",
     "ui": "LD_LIBRARY_PATH=/workspace/tmp-acs/libs /workspace/tmp/node/bin/node /workspace/.local-tests/newspic-studio/ui.test.js",
     "live": "LD_LIBRARY_PATH=/workspace/tmp-acs/libs /workspace/tmp/node/bin/node /workspace/.local-tests/newspic-studio/live-shots.js",
-    "deploy": "node scripts/build.mjs && npx wrangler pages deploy dist --project-name newspic-studio --branch main"
+    "deploy": "node scripts/build.mjs && npx wrangler pages deploy dist --project-name newspic-studio --branch main",
+    "live:v3": "LD_LIBRARY_PATH=/workspace/tmp-acs/libs /workspace/tmp/node/bin/node /workspace/.local-tests/newspic-studio/live-shots-v3.js"
   }
 }

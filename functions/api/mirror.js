@@ -25,6 +25,7 @@ import {
   mergePartnerUrl,
   normalizeSpace,
   parsePartner,
+  trackingFromEnv,
 } from "./_lib.js";
 import { findPreset, PRESETS } from "./_presets.js";
 
@@ -141,10 +142,19 @@ function makeArticle(input) {
   const body = paragraphs.join("\n\n");
   const url = normalizeSpace(input.url || "");
   const partner = input.partner || null;
-  const partnerUrl = mergePartnerUrl(url || (partner && partner.url) || "", partner);
+  const tracking = input.tracking || null;
+  const partnerUrl = mergePartnerUrl(url || (partner && partner.url) || "", partner, tracking);
   const title = normalizeSpace(input.title || "").slice(0, 200) || "제목 없음";
-  const images = (input.images || []).filter(Boolean).slice(0, 4);
+  const images = (input.images || []).filter(Boolean).slice(0, 8);
   const image = input.image || images[0] || "";
+  const bodyImages = (input.bodyImages || [image, ...images]).filter(Boolean);
+  const uniqueBodyImages = [];
+  for (const candidate of bodyImages) {
+    if (!/^https?:/i.test(candidate)) continue;
+    if (uniqueBodyImages.includes(candidate)) continue;
+    uniqueBodyImages.push(candidate);
+    if (uniqueBodyImages.length >= 8) break;
+  }
   const createdAt = new Date().toISOString();
 
   return {
@@ -159,6 +169,7 @@ function makeArticle(input) {
     partnerCode: partner && partner.code ? partner.code : "",
     image,
     images,
+    bodyImages: uniqueBodyImages,
     paragraphs,
     body,
     charCount: body.replace(/\s/g, "").length,
@@ -235,7 +246,7 @@ async function listArticles(kv, q) {
   }
 }
 
-async function handleUrl(payload, kv) {
+async function handleUrl(payload, kv, tracking) {
   const partner = parsePartner(payload.pn || payload.partner || payload.partnerCode || "");
   const rawUrl = normalizeSpace(payload.url || payload.articleUrl || "");
   if (!rawUrl) {
@@ -270,7 +281,7 @@ async function handleUrl(payload, kv) {
   ]);
   const bodyHtml = extractBodyHtml(html);
   const paragraphs = htmlToParagraphs(bodyHtml);
-  const inlineImages = extractInlineImages(bodyHtml, finalUrl);
+  const inlineImages = extractInlineImages(bodyHtml, finalUrl, 8);
   const site = detectSite(html, finalUrl);
   const author = extractAuthor(html);
   const cleanTitle = cleanArticleTitle(title, site);
@@ -298,10 +309,12 @@ async function handleUrl(payload, kv) {
     url: finalUrl,
     image,
     images: [image, ...inlineImages].filter(Boolean),
+    bodyImages: [image, ...inlineImages].filter(Boolean),
     site,
     author,
     publishedAt,
     partner,
+    tracking,
     source: "url",
   });
   article.nid = extractNid(finalUrl);
@@ -310,7 +323,7 @@ async function handleUrl(payload, kv) {
   return json({ ok: true, article, storage: saved ? "kv" : "none", warnings });
 }
 
-async function handleManual(payload, kv) {
+async function handleManual(payload, kv, tracking) {
   const partner = parsePartner(payload.pn || payload.partner || payload.partnerCode || "");
   const title = normalizeSpace(payload.title || "");
   const body = String(payload.body || "").slice(0, 30000);
@@ -327,18 +340,20 @@ async function handleManual(payload, kv) {
     paragraphs: body.split(/\n{1,}/),
     url,
     image: absoluteUrl(payload.image || "", url || undefined),
-    images: payload.image ? [absoluteUrl(payload.image, url || undefined)] : [],
+    images: Array.isArray(payload.images) ? payload.images.map((item) => absoluteUrl(item, url || undefined)) : payload.image ? [absoluteUrl(payload.image, url || undefined)] : [],
+    bodyImages: (Array.isArray(payload.bodyImages) ? payload.bodyImages : []).map((item) => absoluteUrl(item, url || undefined)),
     site: payload.site || "직접 입력",
     author: payload.author || "",
     publishedAt: payload.publishedAt || "",
     partner,
+    tracking,
     source: "manual",
   });
   const saved = await saveArticle(kv, article);
   return json({ ok: true, article, storage: saved ? "kv" : "none", warnings: ["직접 붙여넣은 기사로 저장했습니다."] });
 }
 
-async function handlePreset(payload, kv) {
+async function handlePreset(payload, kv, tracking) {
   const preset = findPreset(String(payload.preset || "")) || PRESETS[0];
   const partner = parsePartner(payload.pn || payload.partner || payload.partnerCode || "");
   const article = makeArticle({
@@ -349,6 +364,7 @@ async function handlePreset(payload, kv) {
     site: preset.site,
     image: preset.image,
     partner,
+    tracking,
     source: "preset",
     presetId: preset.id,
   });
@@ -364,6 +380,7 @@ async function handlePreset(payload, kv) {
 export async function onRequest(context) {
   const { request, env } = context;
   const kv = store(env);
+  const tracking = trackingFromEnv(env);
   const method = request.method.toUpperCase();
 
   if (method === "GET") {
@@ -407,10 +424,10 @@ export async function onRequest(context) {
   }
 
   try {
-    if (payload.preset) return await handlePreset(payload, kv);
+    if (payload.preset) return await handlePreset(payload, kv, tracking);
     const manual = payload.manual === true || (!payload.url && (payload.title || payload.body));
-    if (manual) return await handleManual(payload, kv);
-    const response = await handleUrl(payload, kv);
+    if (manual) return await handleManual(payload, kv, tracking);
+    const response = await handleUrl(payload, kv, tracking);
     /* URL 실패 시에도 화면이 바로 쓸 수 있도록 4컷 뼈대를 함께 내려준다 */
     if (response.status === 200) {
       const data = await response.clone().json();

@@ -27,11 +27,14 @@
     </span>
   </div>
   <div class="top-actions">
+    <span id="autofillBadge" class="pill" title="저장된 채널 계정으로 본문·서명·인텐트 URL을 자동 입력합니다">⚡ 저장된 계정 일괄 자동입력 · 0/6</span>
     <label class="field inline" for="partnerCode">
       <span>파트너 코드</span>
       <input id="partnerCode" name="partnerCode" inputmode="numeric" placeholder="pn 코드" autocomplete="off" aria-describedby="partnerHint" title="뉴스픽 파트너 코드 (pn)">
     </label>
     <span id="storagePill" class="pill" title="아카이브 저장 위치">아카이브 확인 중…</span>
+    <button id="authBtn" class="btn ghost" type="button">로그인 / 회원가입</button>
+    <span id="authPill" class="pill local" hidden>게스트</span>
     <button id="byokBtn" class="btn ghost" type="button">🔑 이미지 키</button>
   </div>
 </header>
@@ -175,6 +178,20 @@
           <div class="chip-row" id="styleRow" role="group" aria-label="그림 스타일"></div>
           <div class="chip-row" id="imageModeRow" role="group" aria-label="4컷 이미지 소스"></div>
           <div class="chip-row" id="layoutRow" role="group" aria-label="합본 배치"></div>
+          <div class="chip-row" id="keywordRow" role="group" aria-label="제목 키워드"></div>
+          <button id="cutsToChannel" class="btn primary" type="button">채널로 →</button>
+        </div>
+      </div>
+
+      <div class="card article-images" id="articleImagePanel" hidden>
+        <div class="card-head">
+          <h2>기사 본문 이미지</h2>
+          <span id="articleImageNote" class="tiny">—</span>
+        </div>
+        <ul id="articleImageList" class="article-image-list"></ul>
+        <div class="row wrap">
+          <button id="assignImagesInOrder" class="btn" type="button">순서대로 4컷에 넣기</button>
+          <span class="tiny">이미지마다 1~4 버튼으로 컷을 직접 고를 수 있어요.</span>
         </div>
       </div>
 
@@ -192,6 +209,7 @@
             <button id="downloadSheet" class="btn" type="button">합본 PNG</button>
             <button id="downloadCuts" class="btn" type="button">컷 4장 PNG</button>
             <button id="resetImages" class="btn ghost" type="button">이미지 초기화</button>
+            <button id="cutsToChannelBottom" class="btn" type="button">채널로 →</button>
           </div>
           <div class="progress" id="cutsProgress" hidden><div class="bar"></div><span>0%</span></div>
           <p class="hint">AI 이미지는 Cloudflare Workers AI(무료 할당량) → Pollinations 순서로 시도하고, 실패하거나 오프라인이면 스타일별 Canvas 아트로 자동 대체됩니다. 이미지에는 글자가 들어가지 않습니다.</p>
@@ -222,6 +240,7 @@
           <div class="chip-row" id="cardLayoutRow" role="group" aria-label="카드 레이아웃"></div>
           <div class="chip-row" id="themeRow" role="group" aria-label="디자인 테마"></div>
           <div class="chip-row" id="ratioRow" role="group" aria-label="비율"></div>
+          <button id="cardsToChannel" class="btn primary" type="button">채널로 →</button>
         </div>
       </div>
 
@@ -231,6 +250,7 @@
           <div class="card-head">
             <h2 id="slideHeading">1장 · 표지</h2>
             <span id="cardSize" class="tiny">1080×1350</span>
+            <span id="cardsFontNote" class="tiny">제목 90% · 본문 70%</span>
           </div>
           <div class="canvas-wrap card-canvas-wrap">
             <canvas id="cardCanvas" width="1080" height="1350" aria-label="카드뉴스 미리보기"></canvas>
@@ -240,6 +260,7 @@
             <button id="nextSlide" class="btn ghost" type="button">다음 →</button>
             <button id="downloadCard" class="btn" type="button">이 카드 PNG</button>
             <button id="downloadZip" class="btn primary" type="button">ZIP 저장</button>
+            <button id="cardsToChannelBottom" class="btn" type="button">채널로 →</button>
           </div>
           <label class="switch"><input id="useArticleImage" type="checkbox" checked> 표지에 기사 이미지 사용</label>
         </div>
@@ -273,6 +294,20 @@
         <div class="chip-row" id="platformRow" role="group" aria-label="플랫폼"></div>
       </div>
 
+      <div class="card account-editor">
+        <div class="card-head">
+          <h2>채널 계정 (6개)</h2>
+          <span id="accountStorage" class="tiny">브라우저 저장</span>
+        </div>
+        <div id="accountGrid" class="account-grid"></div>
+        <div class="row wrap">
+          <button id="saveAccounts" class="btn primary" type="button">계정 저장</button>
+          <button id="applyAccountsBtn" class="btn" type="button">저장된 계정 자동입력</button>
+          <span class="tiny">아이디는 @handle 형식 · 메모/웹훅/토큰은 선택 입력</span>
+        </div>
+        <p id="accountNote" class="hint">로그인하면 회원 KV에, 로그인하지 않으면 이 브라우저에 저장됩니다.</p>
+      </div>
+
       <div class="card channel-select">
         <div class="card-head">
           <h2>업로드할 채널 선택</h2>
@@ -288,6 +323,7 @@
         <div class="card channel-main">
           <div class="card-head">
             <h2 id="channelName">쓰레드</h2>
+            <span id="channelAccount" class="tiny">계정 미입력</span>
             <span id="channelChars" class="tiny">0 / 500자</span>
           </div>
           <textarea id="channelBody" class="channel-body" rows="12" aria-label="채널 본문"></textarea>
@@ -353,6 +389,23 @@
       <button id="saveSettings" class="btn primary" type="button">저장</button>
       <button id="clearKeys" class="btn ghost" type="button">키 삭제</button>
     </div>
+  </form>
+</dialog>
+
+<dialog id="authDialog" class="dialog">
+  <form method="dialog" class="dialog-inner auth-dialog">
+    <div class="card-head"><h2>로그인 / 회원가입</h2><button class="btn ghost" value="close" aria-label="닫기" type="submit">✕</button></div>
+    <p class="hint" id="authNote">구글·네이버·카카오 계정으로 로그인하면 채널 계정 6개가 회원 KV에 저장됩니다.</p>
+    <div class="auth-providers">
+      <button class="btn auth-btn google" type="button" data-login="google"><span aria-hidden="true">G</span> 구글로 계속하기</button>
+      <button class="btn auth-btn naver" type="button" data-login="naver"><span aria-hidden="true">N</span> 네이버로 계속하기</button>
+      <button class="btn auth-btn kakao" type="button" data-login="kakao"><span aria-hidden="true">K</span> 카카오로 계속하기</button>
+    </div>
+    <div class="row wrap auth-actions">
+      <button id="guestBtn" class="btn" type="button">게스트로 계속 (브라우저 저장)</button>
+      <button id="logoutBtn" class="btn ghost" type="button">로그아웃</button>
+    </div>
+    <p class="hint tiny" id="authStatus">—</p>
   </form>
 </dialog>
 

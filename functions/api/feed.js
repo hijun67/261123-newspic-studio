@@ -1,29 +1,40 @@
-/* /api/feed — 분류별 기사 목록 (공개 국내 RSS 기반 + 큐레이션 폴백)
+/* /api/feed — 10개 분류별 기사 목록 (공개 국내 RSS 기반 + 큐레이션 폴백)
  *
- *  GET ?category=all|economy|tech|society|entertain|sports&limit=12&pn=495
- *    → {ok, category, categories[], items[], fallback, fetchedAt}
+ *  GET ?category=all|economy|tech|society|politics|entertain|sports|health|life|realestate|global|partners
+ *      &limit=20&pn=495
+ *    → { ok, category, categories[], items[], fallback, fetchedAt, count }
  *
- *  - 실제 기사: 연합뉴스 카테고리 RSS(경제·산업·사회·연예·스포츠) + 이티뉴스(IT)
- *  - pn: 뉴스픽 기사 주소에만 병합된다(다른 언론사 주소는 그대로).
- *  - RSS가 모두 막히면 카테고리별 큐레이션(_feedFallback.js)을 돌려주고 fallback:true.
+ *  - 실제 기사: 연합뉴스 카테고리 RSS(경제·산업·사회·정치·세계·문화·건강·스포츠·연예) + 이티뉴스(IT)
+ *  - 분류당 기본 20건을 노출한다(limit 최대 20).
+ *  - RSS가 모자라면 카테고리 큐레이션(_feedFallback.js)을 뒤에 채워 항상 20건에 가깝게 만든다.
+ *  - 파트너스(partners): 뉴스픽 파트너스 고수익 콘텐츠 20건(_partners.js)을 그대로 돌려준다.
+ *  - 뉴스픽 주소에는 파트너 코드(pn)와 추적 파라미터(lcp·cp·utm_source)가 병합된다.
  *  - KV(ARCHIVE)가 있으면 카테고리별 5분 캐시를 둔다.
  */
-import { decodeEntities, isSafeFetchUrl, mergePartnerUrl, normalizeSpace, parsePartner } from "./_lib.js";
+import {
+  decodeEntities,
+  isSafeFetchUrl,
+  mergePartnerUrl,
+  normalizeSpace,
+  parsePartner,
+  trackingFromEnv,
+} from "./_lib.js";
 import { curatedFor } from "./_feedFallback.js";
+import { buildPartnersHot } from "./_partners.js";
 
 export const FEED_CATEGORIES = [
   { id: "all", name: "전체", emoji: "🗂️", feeds: [] },
   {
     id: "economy",
-    name: "경제",
+    name: "경제·금융",
     emoji: "💹",
     feeds: [{ url: "https://www.yna.co.kr/rss/economy.xml", site: "연합뉴스" }],
   },
   {
     id: "tech",
-    name: "IT/테크",
+    name: "IT·AI",
     emoji: "💻",
-    match: /(AI|인공지능|반도체|로봇|플랫폼|스타트업|통신|5G|6G|배터리|전기차|소프트웨어|데이터|클라우드|보안|해킹|앱|디지털|IT|테크|온라인|메타버스|스마트폰|노트북|칩|네트워크|인터넷|전자|게임)/i,
+    match: /(AI|인공지능|반도체|로봇|플랫폼|스타트업|통신|5G|6G|배터리|전기차|소프트웨어|데이터|클라우드|보안|해킹|앱|디지털|IT|테크|온라인|메타버스|스마트폰|노트북|칩|네트워크|인터넷|전자|게임|양자)/i,
     feeds: [
       { url: "https://www.yna.co.kr/rss/industry.xml", site: "연합뉴스" },
       { url: "https://rss.etnews.com/Section901.xml", site: "이티뉴스" },
@@ -36,8 +47,14 @@ export const FEED_CATEGORIES = [
     feeds: [{ url: "https://www.yna.co.kr/rss/society.xml", site: "연합뉴스" }],
   },
   {
+    id: "politics",
+    name: "정치",
+    emoji: "🏛️",
+    feeds: [{ url: "https://www.yna.co.kr/rss/politics.xml", site: "연합뉴스" }],
+  },
+  {
     id: "entertain",
-    name: "연예/이슈",
+    name: "연예·방송",
     emoji: "🎬",
     feeds: [{ url: "https://www.yna.co.kr/rss/entertainment.xml", site: "연합뉴스" }],
   },
@@ -47,11 +64,58 @@ export const FEED_CATEGORIES = [
     emoji: "⚽",
     feeds: [{ url: "https://www.yna.co.kr/rss/sports.xml", site: "연합뉴스" }],
   },
+  {
+    id: "health",
+    name: "건강·의학",
+    emoji: "🩺",
+    feeds: [{ url: "https://www.yna.co.kr/rss/health.xml", site: "연합뉴스" }],
+  },
+  {
+    id: "life",
+    name: "라이프·생활",
+    emoji: "🌿",
+    feeds: [
+      { url: "https://www.yna.co.kr/rss/culture.xml", site: "연합뉴스" },
+      {
+        url: "https://www.yna.co.kr/rss/society.xml",
+        site: "연합뉴스",
+        match: /(생활|여행|요리|반려|캠핑|패션|뷰티|인테리어|소비|절약|김장|난방|도서관|주거|육아|건강한|취미)/,
+      },
+    ],
+  },
+  {
+    id: "realestate",
+    name: "부동산·재테크",
+    emoji: "🏠",
+    match: /(부동산|집값|아파트|전세|월세|분양|재건축|재개발|청약|오피스텔|상가|임대|주택|금리|대출|재테크|투자|예금|적금|연금)/,
+    feeds: [
+      { url: "https://www.yna.co.kr/rss/economy.xml", site: "연합뉴스" },
+      { url: "https://www.yna.co.kr/rss/industry.xml", site: "연합뉴스" },
+    ],
+  },
+  {
+    id: "global",
+    name: "글로벌·국제",
+    emoji: "🌏",
+    feeds: [{ url: "https://www.yna.co.kr/rss/international.xml", site: "연합뉴스" }],
+  },
+  {
+    id: "partners",
+    name: "파트너스 고수익",
+    emoji: "💰",
+    feeds: [],
+    partners: true,
+  },
 ];
+
+export const MAIN_CATEGORY_IDS = FEED_CATEGORIES.filter((item) => item.id !== "all" && !item.partners).map(
+  (item) => item.id
+);
 
 const CACHE_SECONDS = 300;
 const FETCH_TIMEOUT = 7000;
-const MAX_ITEMS = 12;
+const MAX_ITEMS = 20;
+const DEFAULT_LIMIT = 20;
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -149,26 +213,27 @@ async function fetchRss(url) {
   }
 }
 
-function stripToPublic(item, pn) {
-  const partnerUrl = mergePartnerUrl(item.url, pn ? { code: pn } : null);
+function stripToPublic(item, partner, tracking) {
+  const partnerUrl = mergePartnerUrl(item.url, partner, tracking);
   return {
     id: item.id,
     title: item.title,
     summary: item.summary,
     url: item.url,
     partnerUrl,
-    partnerApplied: Boolean(pn && partnerUrl !== item.url),
+    partnerApplied: Boolean(partner && partner.code && partnerUrl !== item.url),
     site: item.site,
     image: item.image || "",
     publishedAt: item.publishedAt || "",
     category: item.category,
     source: item.source,
     isFallback: false,
+    hot: false,
   };
 }
 
-function curatedItems(category, pn) {
-  return curatedFor(category).map((item, index) => ({
+function curatedItems(category, fallbackLimit) {
+  return curatedFor(category, fallbackLimit).map((item, index) => ({
     id: "c" + category + index,
     title: item.title,
     summary: item.summary,
@@ -181,14 +246,27 @@ function curatedItems(category, pn) {
     category: item.category,
     source: "curated",
     isFallback: true,
+    hot: false,
     body: item.body,
   }));
 }
 
-export async function buildFeed(categoryId, pn, env, limit = MAX_ITEMS) {
+export async function buildFeed(categoryId, partner, env, limit = DEFAULT_LIMIT) {
+  const tracking = trackingFromEnv(env);
   const category = FEED_CATEGORIES.find((item) => item.id === categoryId) || FEED_CATEGORIES[0];
   const kv = env && env.ARCHIVE && typeof env.ARCHIVE.get === "function" ? env.ARCHIVE : null;
-  const cacheKey = "f:" + category.id + ":" + (pn || "");
+
+  if (category.partners) {
+    return buildPartnersHot({
+      env,
+      kv,
+      pn: partner && partner.code ? partner.code : "",
+      tracking,
+      limit,
+    });
+  }
+
+  const cacheKey = "f:" + category.id + ":" + (partner && partner.code ? partner.code : "") + ":" + limit;
   if (kv) {
     try {
       const cached = await kv.get(cacheKey);
@@ -203,7 +281,7 @@ export async function buildFeed(categoryId, pn, env, limit = MAX_ITEMS) {
     }
   }
 
-  const targets = category.id === "all" ? FEED_CATEGORIES.filter((item) => item.id !== "all") : [category];
+  const targets = category.id === "all" ? FEED_CATEGORIES.filter((item) => item.id !== "all" && !item.partners) : [category];
   const jobs = [];
   for (const target of targets) {
     for (const feed of target.feeds) {
@@ -217,8 +295,9 @@ export async function buildFeed(categoryId, pn, env, limit = MAX_ITEMS) {
     const xml = results[index];
     if (!xml) return;
     const items = parseRss(xml, job.target.id, job.feed.site);
+    const matcher = job.feed.match || job.target.match;
     for (const item of items) {
-      if (job.target.match && !job.target.match.test(item.title + " " + item.summary)) continue;
+      if (matcher && !matcher.test(item.title + " " + item.summary)) continue;
       if (collected.some((existing) => existing.url === item.url)) continue;
       collected.push(item);
     }
@@ -227,17 +306,33 @@ export async function buildFeed(categoryId, pn, env, limit = MAX_ITEMS) {
   const rssItems = collected
     .sort((a, b) => String(b.publishedAt || "").localeCompare(String(a.publishedAt || "")))
     .slice(0, limit)
-    .map((item) => stripToPublic(item, pn));
+    .map((item) => stripToPublic(item, partner, tracking));
 
-  const fallback = rssItems.length === 0;
-  const items = fallback ? curatedItems(category.id, pn).slice(0, limit) : rssItems;
+  /* RSS가 모자라면 큐레이션으로 뒤를 채워 분류당 20건 기준을 지킨다. */
+  let items = rssItems;
+  if (rssItems.length < limit) {
+    const curated = curatedItems(category.id, limit);
+    const extra = curated.filter((item) => !rssItems.some((rss) => rss.title === item.title));
+    if (category.id === "all") {
+      const merged = [];
+      for (let i = 0; i < limit; i += 1) {
+        if (rssItems[i]) merged.push(rssItems[i]);
+        if (extra[i] && merged.length < limit) merged.push(extra[i]);
+      }
+      items = merged.slice(0, limit);
+    } else {
+      items = [...rssItems, ...extra].slice(0, limit);
+    }
+  }
+
   const data = {
     ok: true,
     category: category.id,
     categoryName: category.name,
     categories: FEED_CATEGORIES.map((item) => ({ id: item.id, name: item.name, emoji: item.emoji })),
     items,
-    fallback,
+    fallback: rssItems.length === 0,
+    limit,
     fetchedAt: new Date().toISOString(),
     count: items.length,
   };
@@ -260,20 +355,23 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const category = normalizeSpace(url.searchParams.get("category") || "all");
   const partner = parsePartner(url.searchParams.get("pn") || "");
-  const limit = Math.max(1, Math.min(MAX_ITEMS, Number(url.searchParams.get("limit")) || MAX_ITEMS));
+  const limit = Math.max(1, Math.min(MAX_ITEMS, Number(url.searchParams.get("limit")) || DEFAULT_LIMIT));
   try {
-    const data = await buildFeed(category, partner ? partner.code : "", env, limit);
+    const data = await buildFeed(category, partner, env, limit);
     return json(data);
   } catch (error) {
-    const fallback = curatedItems(category, partner ? partner.code : "").slice(0, limit);
+    if (category === "partners") {
+      return json({ ok: true, category, items: [], fallback: true, count: 0, message: "파트너스 목록을 불러오지 못했습니다." });
+    }
+    const fallback = curatedItems(category, limit);
     return json({
       ok: true,
       category,
       categories: FEED_CATEGORIES.map((item) => ({ id: item.id, name: item.name, emoji: item.emoji })),
       items: fallback,
       fallback: true,
-      fetchedAt: new Date().toISOString(),
       count: fallback.length,
+      fetchedAt: new Date().toISOString(),
       warning: "피드를 불러오지 못해 큐레이션 목록을 보여 줍니다.",
     });
   }

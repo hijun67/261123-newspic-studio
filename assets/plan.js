@@ -56,6 +56,362 @@ export function stripEmoji(text) {
   return String(text || "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim();
 }
 
+/* ------------------------------------------------------------------ *
+ * 0-1. 말맺음 (… 없이 자연스러운 한국어 문장으로 끝내기)
+ * ------------------------------------------------------------------ */
+
+/* 평서문(-다)을 해요체로 바꾸는 표. 긴 것부터 적용한다. */
+const POLITE_TABLE = [
+  ["하겠습니다", "하겠어요"],
+  ["했습니다", "했어요"],
+  ["됐습니다", "됐어요"],
+  ["이었습니다", "이었어요"],
+  ["있습니다", "있어요"],
+  ["없습니다", "없어요"],
+  ["겠습니다", "겠어요"],
+  ["입니다", "이에요"],
+  ["필요가 있다", "필요가 있어요"],
+  ["것으로 보인다", "것으로 보여요"],
+  ["것으로 전망된다", "것으로 전망돼요"],
+  ["전망된다", "전망돼요"],
+  ["예상된다", "예상돼요"],
+  ["관측된다", "관측돼요"],
+  ["분석된다", "분석돼요"],
+  ["보인다", "보여요"],
+  ["밝혔다", "밝혔어요"],
+  ["전했다", "전했어요"],
+  ["발표했다", "발표했어요"],
+  ["강조했다", "강조했어요"],
+  ["지적했다", "지적했어요"],
+  ["설명했다", "설명했어요"],
+  ["분석했다", "분석했어요"],
+  ["예상했다", "예상했어요"],
+  ["결정했다", "결정했어요"],
+  ["확정했다", "확정했어요"],
+  ["마련했다", "마련했어요"],
+  ["추진한다", "추진해요"],
+  ["확대한다", "확대해요"],
+  ["줄인다", "줄여요"],
+  ["늘었다", "늘었어요"],
+  ["줄었다", "줄었어요"],
+  ["올랐다", "올랐어요"],
+  ["떨어졌다", "떨어졌어요"],
+  ["나타났다", "나타났어요"],
+  ["드러났다", "드러났어요"],
+  ["이어졌다", "이어졌어요"],
+  ["전망이다", "전망이에요"],
+  ["계획이다", "계획이에요"],
+  ["예정이다", "예정이에요"],
+  ["방침이다", "방침이에요"],
+  ["것이다", "거예요"],
+  ["이었다", "이었어요"],
+  ["됐다", "됐어요"],
+  ["였다", "였어요"],
+  ["한다", "해요"],
+  ["된다", "돼요"],
+  ["있다", "있어요"],
+  ["없다", "없어요"],
+  ["이다", "이에요"],
+  ["같다", "같아요"],
+  ["많다", "많아요"],
+  ["적다", "적어요"],
+  ["높다", "높아요"],
+  ["낮다", "낮아요"],
+  ["크다", "커요"],
+  ["작다", "작아요"],
+].sort((a, b) => b[0].length - a[0].length);
+
+const PAST_STEM = /[었았였했났졌렸켰쳤봤줬왔갔샀맸뽑았걸렸맞았내놨]다$/;
+const GOOD_ENDING = /(요|죠|니다|세요|에요|예요|해요|돼요|어요|아요|까)[.!?]?$/;
+
+/** 평서문을 해요체로 바꾼다(문장이 아니면 그대로 둔다). */
+export function toPolite(sentence) {
+  let s = String(sentence || "").trim().replace(/[.!?]$/, "");
+  if (!s) return "";
+  for (const [plain, polite] of POLITE_TABLE) {
+    if (s.endsWith(plain)) return s.slice(0, -plain.length) + polite;
+  }
+  if (PAST_STEM.test(s)) return s.slice(0, -1) + "어요";
+  const progressive = presentToProgressive(s);
+  if (progressive) return progressive;
+  return s;
+}
+
+/** '~한다/는다' 현재형을 '~고 있어요'로 바꾼다(해요체 변환 보조). */
+function presentToProgressive(s) {
+  const chars = [...s];
+  if (chars.length < 2 || chars[chars.length - 1] !== "다") return "";
+  const prev = chars[chars.length - 2];
+  if (prev === "는") return chars.slice(0, -2).join("") + "고 있어요";
+  const code = prev ? prev.charCodeAt(0) : 0;
+  if (code >= 0xac00 && code <= 0xd7a3) {
+    const final = (code - 0xac00) % 28;
+    if (final === 4) {
+      let stem = String.fromCharCode(code - 4);
+      if (stem === "드") stem = "들";
+      if (stem === "르") stem = "를";
+      return chars.slice(0, -2).join("") + stem + "고 있어요";
+    }
+  }
+  return "";
+}
+
+/** 끝이 문장으로 닫혔는지 */
+export function hasPoliteEnding(text) {
+  return GOOD_ENDING.test(String(text || "").trim());
+}
+
+function trimBroken(text) {
+  let s = String(text || "").replace(/\s+/g, " ").trim();
+  s = s.replace(/[,…·\-–—]+$/, "");
+  s = s.replace(/\s*[\[\(（【][^\]\)）】]*$/, "");
+  s = s.replace(/["'“”‘’」』]+$/, "");
+  return s.trim();
+}
+
+/** 문장이 아닌 조각을 자연스러운 말맺음으로 닫는다. */
+function closeFragment(text) {
+  let s = trimBroken(text).replace(/[.!?]+$/, "").trim();
+  if (!s) return "";
+  if (GOOD_ENDING.test(s)) return s;
+  if (/다$/.test(s)) return toPolite(s);
+  if (/(하기로|기로)$/.test(s)) return s + " 했어요";
+  if (/(하려고|려고)$/.test(s)) return s + " 해요";
+  if (/고$/.test(s)) return s + " 있어요";
+  if (/며$/.test(s)) return s.slice(0, -1) + "고 있어요";
+  if (/지만$/.test(s)) return s + " 다른 평가도 나와요";
+  if (/는데$/.test(s)) return s + " 관심이 쏠려요";
+  if (/(할|될)$/.test(s)) return s + " 예정이에요";
+  if (/(나는|어나는|지나는)$/.test(s)) return s + " 추세예요";
+  if (/인$/.test(s)) return s + " 거예요";
+  // 명사·수식어로 끝난 조각: 꼬리 수식어와 조사를 떼고 '소식이에요'로 닫는다.
+  let tail = s;
+  for (let guard = 0; guard < 3; guard += 1) {
+    if (/(는|은|던|한)$/.test(tail) && tail.includes(" ")) {
+      tail = tail.replace(/\s+\S+$/, "").trim();
+      continue;
+    }
+    break;
+  }
+  const stripped = tail
+    .replace(/(?:의|을|를|이|가|은|는|도|에서|에게|으로|로|부터|까지|만|과|와|에)$/, "")
+    .replace(/[게히]$/, "")
+    .trim();
+  const base = stripped || tail;
+  if (!base) return "";
+  if (/다$/.test(base)) return toPolite(base);
+  return base + " 관련 소식이에요";
+}
+
+function splitClauses(text) {
+  const source = String(text || "").replace(/\s+/g, " ").trim();
+  if (!source) return [];
+  return source
+    .split(/\s*[,·]\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function closeSentence(base) {
+  let text = closeFragment(base);
+  if (!text) return "";
+  if (!/[.!?]$/.test(text)) text += ".";
+  if (!hasPoliteEnding(text)) {
+    text = text.replace(/[.!?]$/, "") + " 관련 소식이에요.";
+  }
+  return text;
+}
+
+/**
+ * 기사 문장을 … 없이, 완전한 해요체 문장(max자 안팍)으로 다듬는다.
+ * - 이미 완전한 문장이면 해요체로만 바꾼다.
+ * - 길면 절(쉼표) 단위로 자르고, 자른 자리는 자연스러운 말맺음으로 닫는다.
+ */
+export function finishSentence(value, max = 62) {
+  let s = clean(value).replace(/…+/g, " ").replace(/[“”"']+/g, "").replace(/\s+/g, " ").trim();
+  s = s.replace(/^[·•\-–—]\s*/, "").replace(/^(?:다만|그러나|하지만|한편|이에|이처럼|결국)\s+/, "").trim();
+  if (!s) return "";
+  const limit = Math.max(18, Number(max) || 62);
+  /* 여러 문장이면 첫 문장을 쓴다(두 문장을 붙여 이상한 끝이 되지 않게). */
+  const parts = s.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (parts.length > 1) return finishSentence(parts[0], limit);
+  const single = closeSentence(s);
+  if (single.length <= limit) return single;
+
+  /* 너무 길면 앞에서부터 절을 채우되, 끝을 자연스럽게 닫는다. */
+  const clauses = splitClauses(s);
+  let kept = "";
+  for (const clause of clauses) {
+    const next = kept ? kept + " " + clause : clause;
+    if (kept && next.length + 8 > limit) break;
+    kept = next;
+  }
+  if (!kept) kept = s;
+  let result = closeSentence(kept);
+  if (result.length > limit + 6) {
+    const words = kept.split(" ");
+    while (words.length > 2) {
+      words.pop();
+      const candidate = closeSentence(words.join(" "));
+      if (candidate.length <= limit + 6) {
+        result = candidate;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+/** 카드 제목처럼 문장이 아닌 제목을 … 없이 자른다. */
+export function shortTitle(value, max = 42) {
+  const s = clean(value).replace(/\s+/g, " ").replace(/["'“”‘’「」『』]+$/g, "").trim();
+  if (s.length <= max) return s;
+  const slice = s.slice(0, max);
+  let cut = slice.lastIndexOf(" ");
+  if (cut < max * 0.55) cut = slice.lastIndexOf(",");
+  if (cut < max * 0.55) cut = max;
+  return s.slice(0, cut).replace(/[,·\-–—\s]+$/, "").trim();
+}
+
+/* ------------------------------------------------------------------ *
+ * 0-2. 제목 키워드 (이미지 프롬프트 최우선 반영)
+ * ------------------------------------------------------------------ */
+
+const KEYWORD_STOP = new Set([
+  "오늘", "내일", "이번", "지난", "관련", "대한", "위한", "통해", "대해", "따라", "정도", "가장",
+  "모두", "일부", "다시", "이후", "당시", "현재", "우리", "이런", "그런", "저런", "것으로", "것이",
+  "있다", "없다", "한다", "된다", "밝혔다", "기자", "뉴스", "사진", "영상", "종합", "속보", "단독",
+  "무엇", "어떻게", "왜", "위해", "에서", "으로", "라고", "라는", "보다", "만큼", "까지", "부터",
+]);
+
+const KEYWORD_EN = {
+  전기요금: "electricity bill",
+  전기: "electricity",
+  누진제: "progressive rate",
+  누진구간: "tier",
+  요금: "rate",
+  금리: "interest rate",
+  기준금리: "base rate",
+  대출: "loan",
+  예금: "deposit",
+  적금: "savings",
+  연금: "pension",
+  환율: "exchange rate",
+  물가: "inflation",
+  세수: "tax revenue",
+  예산: "budget",
+  부동산: "real estate",
+  집값: "home price",
+  아파트: "apartment",
+  전세: "jeonse lease",
+  월세: "monthly rent",
+  분양: "housing presale",
+  청약: "housing subscription",
+  재건축: "redevelopment",
+  재개발: "urban renewal",
+  오피스텔: "officetel",
+  상가: "commercial unit",
+  반도체: "semiconductor",
+  배터리: "battery",
+  전기차: "electric vehicle",
+  인공지능: "artificial intelligence",
+  로봇: "robot",
+  스타트업: "startup",
+  클라우드: "cloud",
+  보안: "security",
+  스마트폰: "smartphone",
+  통신: "telecom",
+  양자컴퓨터: "quantum computer",
+  수출: "export",
+  무역: "trade",
+  관세: "tariff",
+  유가: "oil price",
+  국회: "national assembly",
+  정부: "government",
+  대통령: "president",
+  선거: "election",
+  장관: "minister",
+  의료: "healthcare",
+  병원: "hospital",
+  백신: "vaccine",
+  독감: "flu",
+  건강: "health",
+  수면: "sleep",
+  비만: "obesity",
+  응급실: "emergency room",
+  드라마: "drama",
+  아이돌: "idol",
+  영화: "movie",
+  공연: "concert",
+  예능: "variety show",
+  웹툰: "webtoon",
+  축구: "football",
+  야구: "baseball",
+  배구: "volleyball",
+  마라톤: "marathon",
+  골프: "golf",
+  김장: "kimchi making",
+  난방: "heating",
+  반려동물: "pet",
+  캠핑: "camping",
+  여행: "travel",
+  도서관: "library",
+  미국: "United States",
+  중국: "China",
+  일본: "Japan",
+  유럽: "Europe",
+  중동: "Middle East",
+  AI: "AI",
+  IT: "IT",
+  OTT: "OTT",
+  "6G": "6G",
+  "5G": "5G",
+};
+
+function englishFor(keyword) {
+  if (KEYWORD_EN[keyword]) return KEYWORD_EN[keyword];
+  for (const [key, value] of Object.entries(KEYWORD_EN)) {
+    if (keyword.includes(key)) return value;
+  }
+  return "";
+}
+
+/** 제목에서 핵심 명사·키워드를 뽑는다. */
+export function extractKeywords(article, limit = 5) {
+  const title = clean(article && article.title);
+  if (!title) return [];
+  const tokens = title.split(/[^가-힣A-Za-z0-9]+/).filter(Boolean);
+  const scored = new Map();
+  const bump = (token, score) => {
+    if (!token || KEYWORD_STOP.has(token)) return;
+    scored.set(token, (scored.get(token) || 0) + score);
+  };
+  for (const token of tokens) {
+    if (token.length < 2 && !/^[A-Z0-9]{2,}$/.test(token)) continue;
+    if (englishFor(token)) bump(token, 2.5);
+    else if (token.length >= 2) bump(token, 1);
+  }
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    const a = tokens[i];
+    const b = tokens[i + 1];
+    if (!/^[가-힣]{2,}$/.test(a) || !/^[가-힣]{2,}$/.test(b)) continue;
+    if (KEYWORD_STOP.has(a) || KEYWORD_STOP.has(b)) continue;
+    bump(a + " " + b, 2);
+  }
+  return [...scored.entries()]
+    .sort((x, y) => y[1] - x[1] || y[0].length - x[0].length)
+    .slice(0, limit)
+    .map(([ko]) => ({ ko, en: englishFor(ko) }));
+}
+
+/** 이미지 프롬프트 맨 앞에 넣을 제목 키워드 줄 (영문 병기). */
+export function keywordPromptLine(article, limit = 4) {
+  const keys = extractKeywords(article, limit);
+  if (!keys.length) return "";
+  const parts = keys.map((key) => (key.en ? `${key.en} (${key.ko})` : key.ko));
+  return "key subject: " + parts.join(", ");
+}
+
 const NOISE = /(기사의 이해를 돕기 위한|기사 내용과 직접적인 연관|이미지로 기사 내용|사진은 기사 내용|자료사진|사진 ?[=:]|제공 ?[=:]|사진공동취재단|게티이미지|클립아트|무단 전재|재배포 금지|Copyright|ⓒ)/;
 const BYLINE_ONLY = /^[가-힣]{2,4}\s*(?:기자|특파원|앵커|논설위원)$/;
 const EMAIL_ONLY = /^[\w.+-]+@[\w.-]+$/;
@@ -354,7 +710,9 @@ export function cutPrompt(cut, styleId, article) {
   const shot = CUT_SHOTS[cut.index - 1] || CUT_SHOTS[0];
   const scene = cut.scene || sceneFromSentences(article, cut.narration || "");
   const subject = cut.visual ? ` of ${cut.visual}` : "";
-  return `${shot}${subject}, ${scene}, ${style.prompt}, no text, no letters, no watermark, no logo, no caption, 16:9 composition`;
+  const keyLine = (cut.keywordPrompt !== false && (cut.keywordPrompt || keywordPromptLine(article, 4))) || "";
+  const head = keyLine ? keyLine + ", " : "";
+  return `${head}${shot}${subject}, ${scene}, ${style.prompt}, no text, no letters, no watermark, no logo, no caption, 16:9 composition`;
 }
 
 export function buildCuts(article, partnerUrl = "") {
@@ -363,16 +721,24 @@ export function buildCuts(article, partnerUrl = "") {
   const ranked = scoreSentences(pool).map((item) => item.sentence);
   const ordered = [...pool.slice(0, 2), ...ranked];
   const subtitle = stripDateline(isNoiseLine(article.subtitle) ? "" : clean(article.subtitle));
+  const keywords = extractKeywords(article, 4);
+  const keywordPrompt = keywordPromptLine(article, 4);
 
-  const factLine = pick(ordered, used, 1)[0] || shorten(article.subtitle || article.title, 70);
+  const hookLine = finishSentence(article.title, 54);
+  const factLine = pick(ordered, used, 1)[0] || subtitle || article.title;
   const twistLine =
     pick(ordered, used, 1, (s) => isIssueSentence(s))[0] || pick(ordered, used, 1)[0] || factLine;
   const endLine =
-    pick(ordered, used, 1, (s) => /(계획|예정|전망|신청|확인|필요|중요)/.test(s))[0] ||
+    pick(ordered, used, 1, (s) => /(계획|예정|전망|신청|확인|필요|중요|부터)/.test(s))[0] ||
     pick(ordered, used, 1)[0] ||
     twistLine;
 
-  const lines = [shorten(article.title, 54), shorten(factLine, 62), shorten(twistLine, 62), shorten(endLine, 62)];
+  const lines = [
+    hookLine,
+    finishSentence(factLine, 62),
+    finishSentence(twistLine, 62),
+    finishSentence(endLine, 62),
+  ];
 
   return ROLE_META.map((meta, index) => {
     const line = lines[index];
@@ -382,14 +748,13 @@ export function buildCuts(article, partnerUrl = "") {
       role: meta.role,
       roleLabel: meta.label,
       narration: line,
-      dialogue:
-        index === 0
-          ? shorten(subtitle || reaction, 46)
-          : reaction,
+      dialogue: index === 0 ? finishSentence(subtitle || reaction, 46) : reaction,
       speaker: meta.speaker,
       expression: meta.expression,
       visual: "",
       scene: "",
+      keywords: keywords.map((key) => key.ko),
+      keywordPrompt,
       aiPrompt: "",
     };
     cut.aiPrompt = cutPrompt(cut, "photo", article);
@@ -435,7 +800,7 @@ function numberLines(article, used, count = 3) {
     const numbers = sentence.match(NUMBER_RE);
     if (!numbers) continue;
     used.add(sentence);
-    picked.push({ text: shorten(sentence, 52), highlight: clean(numbers[0]) });
+    picked.push({ text: finishSentence(sentence, 52), highlight: clean(numbers[0]) });
   }
   return picked;
 }
@@ -480,13 +845,13 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
     if (used.has(sentence)) continue;
     if (sentence.length < 14) continue;
     used.add(sentence);
-    summary.push(shorten(sentence, 54));
+    summary.push(finishSentence(sentence, 54));
   }
-  while (summary.length < 3) summary.push(shorten(subtitle || title, 54));
+  while (summary.length < 3) summary.push(finishSentence(subtitle || title, 54));
 
-  const background = pick(ordered, used, 2, (s) => !isIssueSentence(s)).map((s) => shorten(s, 58));
-  const facts = pick(ordered, used, 3).map((s) => shorten(s, 54));
-  const issues = pick(ordered, used, 2, isIssueSentence).map((s) => shorten(s, 60));
+  const background = pick(ordered, used, 2, (s) => !isIssueSentence(s)).map((s) => finishSentence(s, 58));
+  const facts = pick(ordered, used, 3).map((s) => finishSentence(s, 54));
+  const issues = pick(ordered, used, 2, isIssueSentence).map((s) => finishSentence(s, 60));
   const numbers = numberLines(article, used, 3);
 
   const impact =
@@ -496,14 +861,14 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
   const next =
     pick(ordered, used, 1, (s) => /(신청|시행|예정|계획|발표|확인|필요|부터)/.test(s) && !isIssueSentence(s))[0] ||
     "원문 기사에서 세부 일정과 조건을 확인하세요.";
-  const detail = pick(ordered, used, 2).map((s) => shorten(s, 60));
+  const detail = pick(ordered, used, 2).map((s) => finishSentence(s, 60));
 
   const byKind = {
     cover: {
       kind: "cover",
       kicker: `${clean(article.site) || "뉴스픽"} · 오늘의 이슈`,
-      title: shorten(title, 42),
-      lines: [shorten(subtitle || summary[0], 62)],
+      title: shortTitle(title, 42),
+      lines: [finishSentence(subtitle || summary[0], 62)],
       footer: tags.slice(0, 3).join(" "),
       badges: tags.slice(0, 3),
     },
@@ -562,9 +927,9 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
       kicker: "비교",
       title: "달라지는 것 · 그대로인 것",
       lines: [
-        "달라짐 — " + shorten(facts[0] || summary[0], 46),
-        "그대로 — " + shorten(issues[1] || issues[0] || summary[2], 46),
-        "다음 확인 — " + shorten(next, 46),
+        "달라짐 — " + finishSentence(facts[0] || summary[0], 46),
+        "그대로 — " + finishSentence(issues[1] || issues[0] || summary[2], 46),
+        "다음 확인 — " + finishSentence(next, 46),
       ],
       footer: "무엇이 바뀌고 무엇이 남나",
       badges: ["달라짐", "그대로"],
@@ -574,9 +939,9 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
       kicker: "한 줄 정리",
       title: "내 기준 체크리스트",
       lines: [
-        "✔ 오늘 알아둘 것 — " + shorten(summary[0], 44),
-        "✔ 내게 미치는 영향 — " + shorten(impact, 44),
-        "✔ 다음에 확인할 것 — " + shorten(next, 44),
+        "✔ 오늘 알아둘 것 — " + finishSentence(summary[0], 44),
+        "✔ 내게 미치는 영향 — " + finishSentence(impact, 44),
+        "✔ 다음에 확인할 것 — " + finishSentence(next, 44),
       ],
       footer: "저장해 두고 다시 보기",
       badges: ["체크", "요약"],
@@ -626,10 +991,78 @@ function fitBlocks(blocks, limit, shrink) {
     level += 1;
     text = joinBlocks(shrink(blocks, level));
   }
-  return text.slice(0, limit);
+  if (text.length > limit) {
+    const slice = text.slice(0, limit);
+    const cut = Math.max(slice.lastIndexOf("\n"), slice.lastIndexOf(". "));
+    text = (cut > limit * 0.6 ? slice.slice(0, cut + 1) : slice).trim();
+  }
+  return text;
 }
 
-export function buildChannels(article, cards, partnerUrl = "") {
+/* --------------------------------------------------------------- *
+ * 채널 계정(6개) 자동입력
+ * --------------------------------------------------------------- */
+
+export function normalizeAccount(raw) {
+  if (!raw || typeof raw !== "object") return { handle: "", memo: "", webhook: "", token: "" };
+  let handle = clean(raw.handle).replace(/\s+/g, "").replace(/^@*/, "@").trim();
+  if (handle === "@") handle = "";
+  return {
+    handle,
+    memo: clean(raw.memo).slice(0, 200),
+    webhook: clean(raw.webhook).slice(0, 500),
+    token: clean(raw.token).slice(0, 500),
+  };
+}
+
+export function accountUrlFor(platformId, handle) {
+  const name = String(handle || "").replace(/^@/, "");
+  if (!name) return "";
+  const at = "@" + name;
+  if (platformId === "threads") return "https://www.threads.net/" + at;
+  if (platformId === "instagram") return "https://www.instagram.com/" + name;
+  if (platformId === "facebook") return "https://www.facebook.com/" + name;
+  if (platformId === "x") return "https://x.com/" + name;
+  if (platformId === "tiktok") return "https://www.tiktok.com/" + at;
+  if (platformId === "youtube") return "https://www.youtube.com/" + at;
+  return "";
+}
+
+/** 저장된 6개 채널 계정을 패키지 본문·서명·인텐트 URL에 자동으로 채운다. */
+export function applyAccounts(channels, accounts) {
+  const source = accounts && typeof accounts === "object" ? accounts : {};
+  for (const platform of PLATFORMS) {
+    const pack = channels[platform.id];
+    if (!pack) continue;
+    const account = normalizeAccount(source[platform.id]);
+    pack.account = account;
+    pack.handle = account.handle;
+    pack.via = account.handle ? account.handle.replace(/^@/, "") : "";
+    pack.accountUrl = account.handle ? accountUrlFor(platform.id, account.handle) : "";
+    const baseBody = pack.baseBody !== undefined ? pack.baseBody : pack.body;
+    pack.baseBody = baseBody;
+    let body = baseBody || "";
+    if (account.handle && !body.includes(account.handle)) {
+      const signature = platform.id === "youtube" ? "채널 " + account.handle : account.handle;
+      const limit = pack.limit || 500;
+      const room = Math.max(0, limit - signature.length - 2);
+      let trimmed = body;
+      if (trimmed.length > room) {
+        trimmed = trimmed.slice(0, room);
+        const cut = Math.max(trimmed.lastIndexOf("\n"), trimmed.lastIndexOf(". "));
+        if (cut > room * 0.55) trimmed = trimmed.slice(0, cut + 1);
+        trimmed = trimmed.trim();
+      }
+      body = trimmed ? trimmed + "\n\n" + signature : signature;
+    }
+    pack.body = body;
+    pack.chars = body.length;
+    pack.hashtags = body.match(/#[^\s#]+/g) || [];
+  }
+  return channels;
+}
+
+export function buildChannels(article, cards, partnerUrl = "", options = {}) {
   const tags = buildHashtags(article);
   const title = clean(article.title);
   const summary = (cards.find((card) => card.kind === "summary")?.lines || []).map((line) => line.replace(/^·\s*/, ""));
@@ -774,10 +1207,11 @@ export function buildChannels(article, cards, partnerUrl = "") {
     const pack = out[platform.id];
     pack.name = platform.name;
     pack.emoji = platform.emoji;
+    pack.baseBody = pack.body || "";
     pack.chars = (pack.body || "").length;
     pack.hashtags = (pack.body || "").match(/#[^\s#]+/g) || [];
   }
-  return out;
+  return applyAccounts(out, options && options.accounts);
 }
 
 /* ------------------------------------------------------------------ *
@@ -789,24 +1223,40 @@ export function buildStoryboard(article, options = {}) {
   const hashtags = buildHashtags(article);
   const cuts = buildCuts(article, partnerUrl);
   const cards = buildCards(article, partnerUrl, hashtags, { count: options.cardCount || 8 });
-  const channels = buildChannels(article, cards, partnerUrl);
+  const channels = buildChannels(article, cards, partnerUrl, { accounts: options.accounts });
   return { cuts, cards, channels, hashtags, partnerUrl };
 }
 
-/* 4컷 이미지 소스 모드 */
+/* 4컷 이미지 소스 모드 — 기사 내 이미지 사용이 기본 연동 */
 export const IMAGE_MODES = [
-  { id: "ai", name: "AI 알아서 생성", emoji: "✨", hint: "스타일에 맞춰 AI가 컷마다 새 이미지를 만듭니다." },
-  { id: "article", name: "기사 내 이미지 사용", emoji: "🖼️", hint: "기사 대표·본문 이미지를 컷에 배치하고, 모자란 컷은 AI/Canvas로 채웁니다." },
+  { id: "article", name: "기사 내 이미지 사용", emoji: "🖼️", hint: "기사 대표·본문 이미지 목록에서 컷별로 골라 배치하고, 모자란 컷은 AI/Canvas로 채웁니다." },
+  { id: "ai", name: "AI 알아서 생성", emoji: "✨", hint: "제목 키워드를 반영해 AI가 컷마다 새 이미지를 만듭니다." },
 ];
 
+/* 뉴스픽 파트너스 추적 파라미터 (한일 님 계정 기본값) */
+export const PARTNER_TRACKING = {
+  lcp: "v9sIx86b",
+  cp: "H0cKa48w",
+  utmSource: "np260905v9sIx86b",
+};
+
 export function partnerLinkFor(article, partnerCode) {
-  const code = clean(partnerCode);
   const base = clean(article.partnerUrl || article.url);
   if (!base) return "";
-  if (!code) return base;
   try {
     const url = new URL(base);
-    url.searchParams.set("pn", code);
+    const host = url.hostname.toLowerCase();
+    if (!/(^|\.)newspic\.kr$/.test(host)) return url.toString();
+    const code = clean(partnerCode);
+    if (code) url.searchParams.set("pn", code);
+    url.searchParams.set("lcp", PARTNER_TRACKING.lcp);
+    url.searchParams.set("cp", PARTNER_TRACKING.cp);
+    url.searchParams.set("utm_source", PARTNER_TRACKING.utmSource);
+    if (!url.searchParams.get("utm_medium")) url.searchParams.set("utm_medium", "affiliate");
+    if (!url.searchParams.get("utm_campaign")) {
+      const nid = url.searchParams.get("nid");
+      if (nid) url.searchParams.set("utm_campaign", nid);
+    }
     return url.toString();
   } catch (e) {
     return base;

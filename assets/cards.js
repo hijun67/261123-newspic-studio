@@ -7,6 +7,16 @@ import { font, fitText, roundRect, wrapLines } from "./canvas.js";
 
 const FONT_SERIF = "'Nanum Myeongjo','Noto Serif KR',Georgia,serif";
 
+/* v1.2.0 — 제목은 기존의 90%, 본문은 제목의 70% 크기로 그린다. */
+export const CARD_SCALES = { title: 0.9, body: 0.7 };
+
+/** 제목 크기에서 본문 크기를 계산한다(행 높이·캔버스 폭 안으로 제한). */
+function bodySizeFor(titleSize, rowH, cap) {
+  const byTitle = Math.round(titleSize * CARD_SCALES.body);
+  const byRow = rowH ? Math.round(rowH / 2.1) : byTitle;
+  return Math.max(16, Math.min(cap || 60, byRow, byTitle));
+}
+
 export const CARD_THEMES = {
   magazine: {
     id: "magazine",
@@ -282,7 +292,7 @@ function drawCover(ctx, w, h, pad, theme, card, imageEl, opts = {}) {
   ctx.textAlign = "left";
 
   const titleTop = imageEl ? h * 0.4 : h * 0.46;
-  const titleSize = Math.round(h * 0.046);
+  const titleSize = Math.round(h * 0.046 * CARD_SCALES.title);
   const title = fitText(ctx, card.title, {
     maxWidth: w - pad * 2,
     maxLines: 3,
@@ -305,7 +315,7 @@ function drawCover(ctx, w, h, pad, theme, card, imageEl, opts = {}) {
   const sub = fitText(ctx, (card.lines || []).join(" "), {
     maxWidth: w - pad * 2,
     maxLines: 2,
-    size: 32,
+    size: Math.min(46, Math.round(title.size * CARD_SCALES.body)),
     minSize: 22,
     weight: 600,
     ratio: 1.42,
@@ -324,7 +334,7 @@ function drawCover(ctx, w, h, pad, theme, card, imageEl, opts = {}) {
 }
 
 function drawSummary(ctx, w, h, pad, theme, card) {
-  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: 62, minSize: 40, weight: 800 });
+  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: Math.round(62 * CARD_SCALES.title), minSize: 40, weight: 800 });
   let y = pad + 110;
   ctx.fillStyle = theme.ink;
   ctx.font = font(title.size, 800);
@@ -358,10 +368,10 @@ function drawSummary(ctx, w, h, pad, theme, card) {
     const body = fitText(ctx, line.replace(/^·\s*/, ""), {
       maxWidth: w - pad * 2 - 150,
       maxLines: 3,
-      size: 36,
-      minSize: 24,
+      size: bodySizeFor(title.size, boxH),
+      minSize: 22,
       weight: 700,
-      ratio: 1.36,
+      ratio: 1.32,
     });
     ctx.fillStyle = theme.ink;
     ctx.font = font(body.size, 700);
@@ -371,7 +381,7 @@ function drawSummary(ctx, w, h, pad, theme, card) {
 }
 
 function drawLines(ctx, w, h, pad, theme, card, opts = {}) {
-  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: 60, minSize: 40, weight: 800 });
+  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: Math.round(60 * CARD_SCALES.title), minSize: 40, weight: 800 });
   let y = pad + 112;
   ctx.fillStyle = theme.ink;
   ctx.font = font(title.size, 800);
@@ -401,10 +411,10 @@ function drawLines(ctx, w, h, pad, theme, card, opts = {}) {
     const body = fitText(ctx, String(line).replace(/^✔\s*/, ""), {
       maxWidth: w - pad * 2 - 110,
       maxLines: 3,
-      size: 38,
-      minSize: 24,
+      size: bodySizeFor(title.size, rowH),
+      minSize: 22,
       weight: 700,
-      ratio: 1.38,
+      ratio: 1.34,
     });
     ctx.fillStyle = theme.ink;
     ctx.font = font(body.size, 700);
@@ -414,7 +424,7 @@ function drawLines(ctx, w, h, pad, theme, card, opts = {}) {
 }
 
 function drawNumbers(ctx, w, h, pad, theme, card) {
-  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: 58, minSize: 38, weight: 800 });
+  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: Math.round(58 * CARD_SCALES.title), minSize: 38, weight: 800 });
   let y = pad + 112;
   ctx.fillStyle = theme.ink;
   ctx.font = font(title.size, 800);
@@ -447,10 +457,10 @@ function drawNumbers(ctx, w, h, pad, theme, card) {
     const text = fitText(ctx, item.text, {
       maxWidth: w - pad * 2 - 80,
       maxLines: 2,
-      size: 32,
-      minSize: 22,
+      size: bodySizeFor(title.size, rowH * 0.62, 44),
+      minSize: 20,
       weight: 600,
-      ratio: 1.34,
+      ratio: 1.3,
     });
     ctx.fillStyle = theme.muted;
     ctx.font = font(text.size, 600);
@@ -459,7 +469,7 @@ function drawNumbers(ctx, w, h, pad, theme, card) {
 }
 
 function drawChecklist(ctx, w, h, pad, theme, card) {
-  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: 58, minSize: 38, weight: 800 });
+  const title = fitText(ctx, card.title, { maxWidth: w - pad * 2, maxLines: 2, size: Math.round(58 * CARD_SCALES.title), minSize: 38, weight: 800 });
   let y = pad + 112;
   ctx.fillStyle = theme.ink;
   ctx.font = font(title.size, 800);
@@ -496,10 +506,10 @@ function drawChecklist(ctx, w, h, pad, theme, card) {
     const body = fitText(ctx, String(line).replace(/^✔\s*/, ""), {
       maxWidth: w - pad * 2 - 150,
       maxLines: 3,
-      size: 36,
-      minSize: 24,
+      size: bodySizeFor(title.size, rowH),
+      minSize: 22,
       weight: 700,
-      ratio: 1.36,
+      ratio: 1.34,
     });
     ctx.fillStyle = theme.ink;
     ctx.font = font(body.size, 700);
@@ -524,7 +534,7 @@ function drawCta(ctx, w, h, pad, theme, card, opts = {}) {
   const title = fitText(ctx, card.title, {
     maxWidth: w - pad * 2,
     maxLines: 3,
-    size: 78,
+    size: Math.round(78 * CARD_SCALES.title),
     minSize: 46,
     weight: 800,
     ratio: 1.22,
@@ -536,9 +546,10 @@ function drawCta(ctx, w, h, pad, theme, card, opts = {}) {
 
   let y = titleTop + title.lines.length * title.lineHeight + 40;
   const lines = card.lines || [];
-  ctx.font = font(34, 600);
+  const ctaBody = Math.min(46, Math.round(title.size * CARD_SCALES.body));
+  ctx.font = font(ctaBody, 600);
   ctx.fillStyle = theme.muted;
-  const first = fitText(ctx, lines[0] || "", { maxWidth: w - pad * 2 - 80, maxLines: 2, size: 34, minSize: 22, weight: 600, ratio: 1.38 });
+  const first = fitText(ctx, lines[0] || "", { maxWidth: w - pad * 2 - 80, maxLines: 2, size: ctaBody, minSize: 22, weight: 600, ratio: 1.36 });
   first.lines.forEach((line, i) => ctx.fillText(line, w / 2, y + i * first.lineHeight));
   y += first.lines.length * first.lineHeight + 34;
 
@@ -749,8 +760,8 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
   ctx.fillText(kicker, innerX + pad * 0.45, cursor + Math.round(chipH * 0.24));
   cursor += Math.round(unitH * 0.085);
 
-  // 제목
-  const titleSize = Math.round(Math.min(text.w * 0.115, unitH * 0.085));
+  // 제목 (기존의 90% 크기)
+  const titleSize = Math.round(Math.min(text.w * 0.115, unitH * 0.085) * CARD_SCALES.title);
   const title = fitText(ctx, card.title || "", {
     maxWidth: innerW,
     maxLines: 3,
@@ -779,6 +790,8 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
         Math.round(unitH * 0.16),
         Math.max(Math.round(unitH * 0.07), (rowsBottom - cursor - rowGap * (items.length - 1)) / Math.max(items.length, 1))
       );
+  /* 본문은 제목의 70% 크기 — 행 높이 안에서 자동 줄바꿈·축소되어 캔버스를 넘지 않는다. */
+  const bodySize = bodySizeFor(title.size, single ? Math.min(rowH, Math.round(unitH * 0.2)) : rowH, 48);
   items.forEach((line, index) => {
     const top = cursor + index * (rowH + rowGap);
     const markerGap = card.kind === "summary" ? Math.max(56, Math.round(rowH * 0.5)) : Math.min(78, Math.round(text.w * 0.07));
@@ -797,8 +810,8 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
       const body = fitText(ctx, numbers[index].text || "", {
         maxWidth: innerW,
         maxLines: 2,
-        size: Math.round(rowH * 0.28),
-        minSize: 16,
+        size: Math.round(bodySize * 0.72),
+        minSize: 15,
         weight: 600,
         ratio: 1.3,
       });
@@ -827,10 +840,8 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
       const body = fitText(ctx, textValue, {
         maxWidth: innerW - markerGap,
         maxLines: single ? 3 : 2,
-        size: single
-          ? Math.round(Math.min(text.w * 0.062, unitH * 0.042))
-          : Math.round(Math.min(text.w * 0.054, unitH * 0.032)),
-        minSize: 17,
+        size: bodySize,
+        minSize: Math.max(15, Math.round(bodySize * 0.6)),
         weight: card.kind === "cover" ? 600 : 700,
         ratio: 1.3,
       });

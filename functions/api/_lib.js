@@ -415,6 +415,25 @@ export function parsePartner(input) {
   return null;
 }
 
+/* 뉴스픽 파트너스 추적 파라미터 (한일 님 계정 기본값)
+ * - 뉴스픽 기사 주소에는 항상 이 값이 붙어, 파트너스 수익이 한일 님 계정으로 잡힌다.
+ * - Cloudflare Pages 환경변수(PARTNERS_LCP·PARTNERS_CP·PARTNERS_UTM)로 갈아끼울 수 있다.
+ */
+export const PARTNER_TRACKING = {
+  lcp: "v9sIx86b",
+  cp: "H0cKa48w",
+  utmSource: "np260905v9sIx86b",
+};
+
+export function trackingFromEnv(env) {
+  const source = env || {};
+  return {
+    lcp: normalizeSpace(source.PARTNERS_LCP || "") || PARTNER_TRACKING.lcp,
+    cp: normalizeSpace(source.PARTNERS_CP || "") || PARTNER_TRACKING.cp,
+    utmSource: normalizeSpace(source.PARTNERS_UTM || "") || PARTNER_TRACKING.utmSource,
+  };
+}
+
 export function isNewspicUrl(raw) {
   try {
     const host = new URL(raw).hostname.toLowerCase();
@@ -425,9 +444,12 @@ export function isNewspicUrl(raw) {
 }
 
 /**
- * 기사 URL 에 내 파트너 코드를 병합한다. (뉴스픽 기사가 아니면 그대로)
+ * 기사 URL 에 내 파트너 코드·추적 파라미터를 병합한다. (뉴스픽 기사가 아니면 그대로)
+ * - pn: 사용자가 입력한 코드가 있으면 그것을, 없으면 기사 원래 pn 을 유지한다.
+ * - lcp·cp·utm_source: 한일 님 파트너스 계정 추적값을 항상 덮어쓴다.
+ * - utm_medium=affiliate, utm_campaign=nid 는 없을 때만 채운다.
  */
-export function mergePartnerUrl(articleUrl, partner) {
+export function mergePartnerUrl(articleUrl, partner, tracking) {
   const url = normalizeSpace(articleUrl || "");
   if (!url) return "";
   let parsed;
@@ -436,8 +458,20 @@ export function mergePartnerUrl(articleUrl, partner) {
   } catch (e) {
     return url;
   }
-  if (!partner || !partner.code || !isNewspicUrl(url)) return parsed.toString();
-  parsed.searchParams.set("pn", partner.code);
+  if (!isNewspicUrl(url)) return parsed.toString();
+  const code = partner && partner.code ? String(partner.code) : "";
+  if (code) parsed.searchParams.set("pn", code);
+  const track = tracking === false ? null : tracking || PARTNER_TRACKING;
+  if (track) {
+    if (track.lcp) parsed.searchParams.set("lcp", track.lcp);
+    if (track.cp) parsed.searchParams.set("cp", track.cp);
+    if (track.utmSource) parsed.searchParams.set("utm_source", track.utmSource);
+    if (!parsed.searchParams.get("utm_medium")) parsed.searchParams.set("utm_medium", "affiliate");
+    if (!parsed.searchParams.get("utm_campaign")) {
+      const nid = parsed.searchParams.get("nid");
+      if (nid) parsed.searchParams.set("utm_campaign", nid);
+    }
+  }
   return parsed.toString();
 }
 
@@ -592,20 +626,24 @@ export function absoluteUrl(src, base) {
   }
 }
 
-/** 본문 안의 <img> 주소를 모은다. (썸네일 후보) */
-export function extractInlineImages(bodyHtml, base, limit = 4) {
+/** 본문 안의 <img> 주소를 모은다. (4컷 배경 후보 — 최대 limit 장) */
+const IMAGE_SKIP = /(?:logo|icon|blank|spacer|btn_|button|sprite|pixel|ad_|banner)/i;
+
+export function extractInlineImages(bodyHtml, base, limit = 8) {
   const out = [];
   const re = /<img\b[^>]*>/gi;
   let m;
-  while ((m = re.exec(String(bodyHtml || ""))) && out.length < limit) {
+  while ((m = re.exec(String(bodyHtml || "")))) {
     const tag = m[0];
-    const srcMatch = /\b(?:data-src|data-original|src)\s*=\s*["']([^"']+)["']/i.exec(tag);
+    const srcMatch = /\b(?:data-src|data-original|data-lazy-src|src)\s*=\s*["']([^"']+)["']/i.exec(tag);
     if (!srcMatch) continue;
     const url = absoluteUrl(srcMatch[1], base);
     if (!/^https?:/i.test(url)) continue;
     if (/\.(gif|svg)(\?|$)/i.test(url)) continue;
+    if (IMAGE_SKIP.test(url)) continue;
     if (out.includes(url)) continue;
     out.push(url);
+    if (out.length >= limit) break;
   }
   return out;
 }
