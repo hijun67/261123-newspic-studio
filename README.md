@@ -47,7 +47,7 @@
 
 ### 이미지 생성
 
-1. **무료(기본)** — Pollinations(`image.pollinations.ai`, flux)에서 서버가 받아 base64 로 반환.
+1. **무료(기본)** — Cloudflare **Workers AI**(`@cf/black-forest-labs/flux-1-schnell`, 무료 할당량)로 생성합니다. 바인딩이 없을 때는 Pollinations(`image.pollinations.ai`, flux)를 시도합니다. 결과는 항상 base64 data URL 로 돌려주어 캔버스 저장 문제가 없습니다.
 2. **실패/오프라인** — 스타일별 Canvas 아트(실사 야경·지브리 수채화·웹툰 집중선·이슈툰 하프톤)로 자동 대체. 화면이 절대 깨지지 않습니다.
 3. **BYOK(선택)** — 본인 OpenAI / Gemini 키를 브라우저(localStorage)에만 저장하고, 생성 요청 때 이 사이트의 함수로만 전달합니다. 서버에 저장하지 않습니다.
 
@@ -75,12 +75,20 @@ node scripts/build.mjs
 npx wrangler pages deploy dist --project-name newspic-studio --branch main
 ```
 
-- `wrangler.toml` 의 `pages_build_output_dir = "dist"`, `[[kv_namespaces]] binding = "ARCHIVE"`.
+- `wrangler.toml` 의 `pages_build_output_dir = "dist"`, `[[kv_namespaces]] binding = "ARCHIVE"`, `[ai] binding = "AI"`.
 - Cloudflare 대시보드에서 Pages 프로젝트 `newspic-studio` 의 프로덕션 브랜치는 `main`.
 - **GitHub 푸시만으로는 자동 배포되지 않습니다.** (직접 업로드 프로젝트) 수정 시 위 2)를 다시 실행합니다.
 - 배포용 API 토큰은 `Cloudflare Pages:Edit`(+KV 생성 시 `Workers KV Storage:Edit`)만, 계정 한정, 짧은 만료로 발급하고 **배포 직후 삭제**합니다.
 
-## 5. 파일 구조
+## 5. 검증 결과 (2026-11-23)
+
+| 구분 | 결과 |
+|---|---|
+| 단위·API (`test.js`) | **106/106 통과** — 4컷·카드8·6채널·ZIP, `/api/*` 전 경로, KV/폴백/차단 |
+| headless Chromium UI (`ui.test.js`) | **79/79 통과** — 1440·390px 오버플로 0, 콘솔 에러 0, PNG 규격, ZIP, 클립보드, 6플랫폼, webm |
+| 라이브 (`live-shots.js`) | **25/25 통과** — 실제 뉴스픽 기사 미러링, Workers AI 4컷, 카드 8장, 6채널, 모바일 |
+
+## 6. 파일 구조
 
 ```
 index.html                  4단계 화면
@@ -100,7 +108,7 @@ scripts/build.mjs           dist/ 빌드
 wrangler.toml               Pages + KV 설정
 ```
 
-## 6. 알아둘 점 · 한계
+## 7. 알아둘 점 · 한계
 
 - **본문 문장을 원문 그대로 사용**합니다. 게시 전 사실 확인이 필요하고, 인용 범위를 넘는 전재는 피하세요.
 - 일부 언론사/뉴스픽 페이지는 봇 차단(403)·타임아웃이 날 수 있습니다. 그때는 화면이 **직접 붙여넣기**로 전환됩니다(주소는 첫 댓글 링크용으로 유지).

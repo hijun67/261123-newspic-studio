@@ -209,7 +209,7 @@ a.btn { text-decoration: none; }
 .reader-subtitle { color: var(--muted); font-size: 14.5px; line-height: 1.65; }
 .reader-meta { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted-2); font-size: 12px; }
 .reader-image-wrap { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #0a0d12; }
-.reader-image-wrap img { display: block; width: 100%; height: auto; max-height: 360px; object-fit: cover; }
+.reader-image-wrap img { display: block; width: 100%; height: auto; max-height: 320px; object-fit: cover; }
 .reader-body { display: flex; flex-direction: column; gap: 11px; margin-top: 4px; }
 .reader-body p { color: #d6dde8; font-size: 15px; line-height: 1.82; word-break: keep-all; }
 .reader-body p:first-child::first-letter { font-weight: 900; }

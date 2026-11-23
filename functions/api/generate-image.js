@@ -5,6 +5,7 @@
  *    provider "openai" : BYOK (브라우저에만 저장된 본인 키를 이 요청에만 실어 보냄)
  *    provider "gemini" : BYOK (Google AI Studio 키)
  *
+ *  free 경로는 Workers AI 바인딩(AI) → Pollinations 순서로 시도한다.
  *  응답 {ok:true, dataUrl, provider, ms} 또는 {ok:false, mode:"fallback", reason}
  *  이미지는 항상 base64 data URL 로 돌려주어 캔버스 저장(tainted canvas) 문제를 없앤다.
  */
@@ -130,8 +131,21 @@ async function generateGemini(prompt, apiKey, model) {
   return `data:${mime};base64,${inline.data}`;
 }
 
+async function generateWorkersAi(env, prompt) {
+  const output = await withTimeout(
+    env.AI.run("@cf/black-forest-labs/flux-1-schnell", {
+      prompt: prompt.slice(0, 2000),
+      steps: 4,
+    }),
+    TIMEOUT_BYOK
+  );
+  const base64 = output && (output.image || (output.result && output.result.image));
+  if (!base64) throw new Error("no image in response");
+  return "data:image/jpeg;base64," + base64;
+}
+
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
   if (request.method.toUpperCase() !== "POST") {
     return json({ ok: false, code: "method_not_allowed", message: "POST 로 호출해 주세요." }, 405);
   }
@@ -169,8 +183,21 @@ export async function onRequest(context) {
       return json({ ok: true, dataUrl, provider, ms: Date.now() - started });
     }
 
-    const dataUrl = await generateFree(prompt, width, height, seed);
-    return json({ ok: true, dataUrl, provider: "free", ms: Date.now() - started });
+    let workersAiError = "";
+    if (env && env.AI && typeof env.AI.run === "function") {
+      try {
+        const dataUrl = await generateWorkersAi(env, prompt);
+        return json({ ok: true, dataUrl, provider: "workers-ai", ms: Date.now() - started });
+      } catch (error) {
+        workersAiError = String((error && error.message) || error);
+      }
+    }
+    try {
+      const dataUrl = await generateFree(prompt, width, height, seed);
+      return json({ ok: true, dataUrl, provider: "free", ms: Date.now() - started });
+    } catch (error) {
+      throw new Error((error && error.message) || workersAiError || "free image failed");
+    }
   } catch (error) {
     const reason =
       error && /timeout/i.test(String(error.message))

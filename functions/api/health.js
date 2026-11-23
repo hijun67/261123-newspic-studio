@@ -10,6 +10,7 @@ export async function onRequest(context) {
       mirror: true,
       kv: Boolean(env.ARCHIVE && typeof env.ARCHIVE.get === "function"),
       freeImage: true,
+      workersAi: Boolean(env.AI && typeof env.AI.run === "function"),
       byok: ["openai", "gemini"],
       cards: 8,
       channels: 6,

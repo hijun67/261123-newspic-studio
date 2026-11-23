@@ -29,7 +29,7 @@
   <div class="top-actions">
     <label class="field inline" for="partnerCode">
       <span>파트너 코드</span>
-      <input id="partnerCode" name="partnerCode" inputmode="numeric" placeholder="1234" autocomplete="off" aria-describedby="partnerHint">
+      <input id="partnerCode" name="partnerCode" inputmode="numeric" placeholder="pn 코드" autocomplete="off" aria-describedby="partnerHint" title="뉴스픽 파트너 코드 (pn)">
     </label>
     <span id="storagePill" class="pill" title="아카이브 저장 위치">아카이브 확인 중…</span>
     <button id="byokBtn" class="btn ghost" type="button">🔑 이미지 키</button>
@@ -157,7 +157,7 @@
             <button id="resetImages" class="btn ghost" type="button">이미지 초기화</button>
           </div>
           <div class="progress" id="cutsProgress" hidden><div class="bar"></div><span>0%</span></div>
-          <p class="hint">AI 이미지는 무료 생성(Pollinations)을 먼저 시도하고, 실패하거나 오프라인이면 스타일별 Canvas 아트로 자동 대체됩니다. 이미지에는 글자가 들어가지 않습니다.</p>
+          <p class="hint">AI 이미지는 Cloudflare Workers AI(무료 할당량) → Pollinations 순서로 시도하고, 실패하거나 오프라인이면 스타일별 Canvas 아트로 자동 대체됩니다. 이미지에는 글자가 들어가지 않습니다.</p>
         </div>
 
         <div class="cut-editors" id="cutsGrid"></div>
@@ -202,7 +202,7 @@
             <button id="downloadCard" class="btn" type="button">이 카드 PNG</button>
             <button id="downloadZip" class="btn primary" type="button">8장 ZIP 저장</button>
           </div>
-          <label class="switch"><input id="useArticleImage" type="checkbox"> 표지에 기사 이미지 사용</label>
+          <label class="switch"><input id="useArticleImage" type="checkbox" checked> 표지에 기사 이미지 사용</label>
         </div>
         <div class="slide-editor card">
           <div class="card-head"><h2>문구 편집</h2><span id="editorKind" class="tiny">표지</span></div>
@@ -291,7 +291,7 @@
     <p class="hint">키는 <strong>이 브라우저에만</strong> 저장되고, 4컷 이미지를 만들 때 이 사이트의 함수로만 전송됩니다. 서버에 저장하지 않습니다.</p>
     <label class="field" for="imageProvider"><span>이미지 엔진</span>
       <select id="imageProvider">
-        <option value="free">무료 (Pollinations · 키 없음)</option>
+        <option value="free">무료 (Workers AI · Pollinations · 키 없음)</option>
         <option value="openai">OpenAI (본인 키)</option>
         <option value="gemini">Google Gemini (본인 키)</option>
       </select>

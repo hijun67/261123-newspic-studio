@@ -9,6 +9,10 @@ name = "newspic-studio"
 compatibility_date = "2026-11-20"
 pages_build_output_dir = "dist"
 
+# Workers AI — 무료 할당량 내에서 4컷 배경 이미지를 생성한다 (Pollinations 실패 시에도 든든한 경로)
+[ai]
+binding = "AI"
+
 [[kv_namespaces]]
 binding = "ARCHIVE"
-id = "__KV_ID_PLACEHOLDER__"
+id = "86ffcbaf522844558e798e723ec2b33f"

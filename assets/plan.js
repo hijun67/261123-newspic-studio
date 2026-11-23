@@ -56,6 +56,13 @@ export function stripEmoji(text) {
   return String(text || "").replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim();
 }
 
+const NOISE = /(기사의 이해를 돕기 위한|기사 내용과 직접적인 연관|이미지로 기사 내용|사진은 기사 내용|자료사진|사진 ?[=:]|제공 ?[=:]|사진공동취재단|게티이미지|클립아트|무단 전재|재배포 금지|Copyright|ⓒ)/;
+
+/** 사진 설명·저작권 안내처럼 기사 내용이 아닌 줄 */
+export function isNoiseLine(text) {
+  return NOISE.test(String(text || ""));
+}
+
 export function sentencePool(article) {
   const paragraphs = Array.isArray(article.paragraphs) && article.paragraphs.length
     ? article.paragraphs
@@ -68,7 +75,7 @@ export function sentencePool(article) {
       const key = sentence.replace(/[^\w가-힣]/g, "").slice(0, 40);
       if (seen.has(key)) continue;
       if (title && sentence.replace(/\s/g, "") === title.replace(/\s/g, "")) continue;
-      if (/^(사진|자료|그래픽|영상)\s*[=:]/.test(sentence)) continue;
+      if (isNoiseLine(sentence)) continue;
       if (/^(copyright|ⓒ|무단 전재)/i.test(sentence)) continue;
       seen.add(key);
       out.push(sentence);
@@ -209,7 +216,7 @@ const TOPICS = [
 
 export function topicProfile(article) {
   const title = clean(article.title);
-  const subtitle = clean(article.subtitle);
+  const subtitle = isNoiseLine(article.subtitle) ? "" : clean(article.subtitle);
   const text = [title, subtitle, article.body].join(" ");
   const scored = TOPICS.map((topic) => {
     const global = new RegExp(topic.match.source, "g");
@@ -362,7 +369,10 @@ export function buildCuts(article, partnerUrl = "") {
       role: meta.role,
       roleLabel: meta.label,
       narration: line,
-      dialogue: index === 0 ? shorten(article.subtitle || reaction, 46) : reaction,
+      dialogue:
+        index === 0
+          ? shorten((isNoiseLine(article.subtitle) ? "" : article.subtitle) || reaction, 46)
+          : reaction,
       speaker: meta.speaker,
       expression: meta.expression,
       visual: "",
@@ -424,7 +434,7 @@ export function buildCards(article, partnerUrl = "", hashtags = null) {
   const ordered = [...pool.slice(0, 3), ...ranked];
   const tags = hashtags || buildHashtags(article);
   const title = clean(article.title);
-  const subtitle = clean(article.subtitle);
+  const subtitle = isNoiseLine(article.subtitle) ? "" : clean(article.subtitle);
 
   const summary = [];
   for (const sentence of ordered) {
@@ -560,8 +570,8 @@ export function buildChannels(article, cards, partnerUrl = "") {
   const issueLine = (cards.find((card) => card.kind === "issue")?.lines || [])[0] || summary[0] || "";
   const url = partnerUrl || article.partnerUrl || article.url || "";
   const linkNote = url
-    ? `📎 전체 기사 👉 ${url}`
-    : "📎 파트너 코드를 넣으면 여기에 내 뉴스픽 링크가 들어갑니다.";
+    ? `→ 전체 기사: ${url}`
+    : "→ 파트너 코드를 넣으면 여기에 내 뉴스픽 링크가 들어갑니다.";
   const hash = tags.slice(0, 6).join(" ");
   const out = {};
 
@@ -573,7 +583,7 @@ export function buildChannels(article, cards, partnerUrl = "") {
       [
         shorten(title, 80),
         summary.slice(0, 3).map((line) => "· " + shorten(line, 56)).join("\n"),
-        "👇 전체 기사는 첫 번째 댓글 링크에서 확인하세요.",
+        "↓ 전체 기사는 첫 번째 댓글 링크에서 확인하세요.",
         hash,
       ],
       500,
@@ -594,7 +604,7 @@ export function buildChannels(article, cards, partnerUrl = "") {
     [
       shorten(title, 64),
       shorten(summary[0] || issueLine, 60),
-      "원문 링크는 첫 댓글 👇",
+      "원문 링크는 첫 댓글 ↓",
       tags.slice(0, 2).join(" "),
     ],
     280,

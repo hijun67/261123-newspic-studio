@@ -10,6 +10,7 @@ import {
   buildZip,
   cutPrompt,
   partnerLinkFor,
+  isNoiseLine,
   shorten,
 } from "./plan.js";
 import { loadImage, renderCutCanvas, renderSheet, styleTheme } from "./canvas.js";
@@ -398,8 +399,9 @@ function renderReader() {
   $("readerDate").textContent = dateText;
   $("readerChars").textContent = `${article.charCount || 0}자 · ${(article.paragraphs || []).length}문단`;
   $("readerTitle").textContent = article.title;
-  $("readerSubtitle").textContent = article.subtitle || "";
-  $("readerSubtitle").hidden = !article.subtitle;
+  const subtitle = isNoiseLine(article.subtitle) ? "" : article.subtitle || "";
+  $("readerSubtitle").textContent = subtitle;
+  $("readerSubtitle").hidden = !subtitle;
 
   const meta = $("readerMeta");
   meta.textContent = "";
