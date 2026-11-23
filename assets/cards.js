@@ -684,12 +684,13 @@ export function splitOrientationFor(index) {
 function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
   const orientation = opts.orientation || splitOrientation(opts.index || 0);
   const horizontal = orientation === "left" || orientation === "right";
+  const visShare = horizontal ? 0.46 : 0.44;
   const vis = horizontal
-    ? { x: orientation === "left" ? 0 : w / 2, y: 0, w: w / 2, h }
-    : { x: 0, y: orientation === "top" ? 0 : h / 2, w, h: h / 2 };
+    ? { x: orientation === "left" ? 0 : w * (1 - visShare), y: 0, w: w * visShare, h }
+    : { x: 0, y: orientation === "top" ? 0 : h * (1 - visShare), w, h: h * visShare };
   const text = horizontal
-    ? { x: orientation === "left" ? w / 2 : 0, y: 0, w: w / 2, h }
-    : { x: 0, y: orientation === "top" ? h / 2 : 0, w, h: h / 2 };
+    ? { x: orientation === "left" ? w * visShare : 0, y: 0, w: w * (1 - visShare), h }
+    : { x: 0, y: orientation === "top" ? h * visShare : 0, w, h: h * (1 - visShare) };
 
   // 배경
   ctx.fillStyle = theme.bg;
@@ -717,37 +718,39 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
 
   // 텍스트 면
   paintPanel(ctx, text.x, text.y, text.w, text.h, theme);
-  const pad = Math.round(Math.min(w, h) * 0.055);
+  const pad = Math.round(Math.min(w, h) * 0.05);
   const innerX = text.x + pad;
   const innerW = text.w - pad * 2;
   let cursor = text.y + pad;
+  const unitH = text.h;
 
   ctx.save();
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
 
   // 상단: 장수 · 머리말
-  ctx.font = font(Math.round(Math.min(w, h) * 0.026), 800);
+  ctx.font = font(Math.round(Math.min(text.w * 0.038, unitH * 0.03)), 800);
   ctx.fillStyle = "rgba(255,255,255,0.78)";
   ctx.fillText(`CARD ${String(card.no || 1).padStart(2, "0")} / ${String(opts.total || 8).padStart(2, "0")}`, innerX, cursor);
   ctx.textAlign = "right";
   ctx.fillText("NEWSPIC STUDIO", innerX + innerW, cursor);
   ctx.textAlign = "left";
-  cursor += Math.round(Math.min(w, h) * 0.055);
+  cursor += Math.round(unitH * 0.052);
 
   // 머리말 칩
   const kicker = String(card.kicker || "뉴스픽");
-  ctx.font = font(Math.round(Math.min(w, h) * 0.03), 800);
+  ctx.font = font(Math.round(unitH * 0.03), 800);
   const chipW = Math.min(innerW, ctx.measureText(kicker).width + pad * 0.9);
+  const chipH = Math.round(unitH * 0.058);
   ctx.fillStyle = "rgba(255,255,255,0.2)";
-  roundRect(ctx, innerX, cursor, chipW, Math.round(Math.min(w, h) * 0.062), 999);
+  roundRect(ctx, innerX, cursor, chipW, chipH, 999);
   ctx.fill();
   ctx.fillStyle = "#ffffff";
-  ctx.fillText(kicker, innerX + pad * 0.45, cursor + Math.round(Math.min(w, h) * 0.014));
-  cursor += Math.round(Math.min(w, h) * 0.1);
+  ctx.fillText(kicker, innerX + pad * 0.45, cursor + Math.round(chipH * 0.24));
+  cursor += Math.round(unitH * 0.085);
 
   // 제목
-  const titleSize = Math.round(Math.min(text.w, text.h) * 0.11);
+  const titleSize = Math.round(Math.min(text.w * 0.115, unitH * 0.085));
   const title = fitText(ctx, card.title || "", {
     maxWidth: innerW,
     maxLines: 3,
@@ -759,25 +762,26 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
   ctx.fillStyle = "#ffffff";
   ctx.font = font(title.size, 900);
   title.lines.forEach((line, i) => ctx.fillText(line, innerX, cursor + i * title.lineHeight));
-  cursor += title.lines.length * title.lineHeight + pad * 0.32;
+  cursor += title.lines.length * title.lineHeight + Math.round(unitH * 0.02);
   ctx.fillStyle = "rgba(255,255,255,0.9)";
-  ctx.fillRect(innerX, cursor, Math.round(innerW * 0.16), Math.round(Math.min(w, h) * 0.012));
-  cursor += Math.round(Math.min(w, h) * 0.05);
+  ctx.fillRect(innerX, cursor, Math.round(innerW * 0.16), Math.max(4, Math.round(unitH * 0.009)));
+  cursor += Math.round(unitH * 0.045);
 
   // 본문
   const items = (card.lines || []).slice(0, 3);
   const numbers = card.numbers || [];
-  const rowGap = Math.round(Math.min(w, h) * 0.018);
-  const rowsBottom = text.y + text.h - pad * 2.5;
+  const rowGap = Math.round(unitH * 0.018);
+  const rowsBottom = text.y + text.h - pad * 2.6;
   const single = items.length === 1 && !(card.kind === "numbers" && numbers.length > 1);
   const rowH = single
-    ? Math.max(Math.round(Math.min(w, h) * 0.09), rowsBottom - cursor)
+    ? Math.max(Math.round(unitH * 0.09), rowsBottom - cursor)
     : Math.min(
-        Math.round(Math.min(w, h) * 0.15),
-        Math.max(Math.round(Math.min(w, h) * 0.075), (rowsBottom - cursor - rowGap * (items.length - 1)) / Math.max(items.length, 1))
+        Math.round(unitH * 0.16),
+        Math.max(Math.round(unitH * 0.07), (rowsBottom - cursor - rowGap * (items.length - 1)) / Math.max(items.length, 1))
       );
   items.forEach((line, index) => {
     const top = cursor + index * (rowH + rowGap);
+    const markerGap = card.kind === "summary" ? Math.max(56, Math.round(rowH * 0.5)) : Math.min(78, Math.round(text.w * 0.07));
     if (index > 0) {
       ctx.strokeStyle = "rgba(255,255,255,0.22)";
       ctx.lineWidth = 2;
@@ -821,9 +825,11 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
         ctx.fillText(marker, innerX, top + rowH * 0.02);
       }
       const body = fitText(ctx, textValue, {
-        maxWidth: innerW - rowH * 0.5,
-        maxLines: 2,
-        size: Math.round(Math.min(w, h) * 0.033),
+        maxWidth: innerW - markerGap,
+        maxLines: single ? 3 : 2,
+        size: single
+          ? Math.round(Math.min(text.w * 0.062, unitH * 0.042))
+          : Math.round(Math.min(text.w * 0.054, unitH * 0.032)),
         minSize: 17,
         weight: card.kind === "cover" ? 600 : 700,
         ratio: 1.3,
@@ -831,15 +837,18 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
       ctx.fillStyle = "rgba(255,255,255,0.94)";
       ctx.font = font(body.size, card.kind === "cover" ? 600 : 700);
       const bodyTop = single ? top + Math.max(0, (rowH - body.lines.length * body.lineHeight) / 2) : top;
-      body.lines.forEach((textLine, i) => ctx.fillText(textLine, innerX + rowH * 0.5, bodyTop + i * body.lineHeight));
+      body.lines.forEach((textLine, i) => ctx.fillText(textLine, innerX + markerGap, bodyTop + i * body.lineHeight));
     }
   });
 
-  // 키워드 배지
-  const badges = (card.badges && card.badges.length ? card.badges : []).filter(Boolean).slice(0, 3);
+  // 키워드 배지 (바닥 문구와 겹치는 태그는 생략)
+  const footText = String(card.footer || "");
+  const badges = (card.badges && card.badges.length ? card.badges : [])
+    .filter((badge) => badge && !footText.includes(String(badge).replace(/^#/, "")))
+    .slice(0, 3);
   if (badges.length) {
     let bx = innerX;
-    const by = text.y + text.h - pad * 2.1;
+    const by = text.y + text.h - pad * 2.45;
     ctx.font = font(Math.round(Math.min(w, h) * 0.024), 800);
     for (const badge of badges) {
       const label = String(badge).replace(/^#/, "#");
@@ -858,14 +867,14 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
   ctx.textAlign = "left";
   ctx.fillStyle = "rgba(255,255,255,0.7)";
   ctx.font = font(Math.round(Math.min(w, h) * 0.026), 600);
-  ctx.fillText(String(card.footer || "뉴스픽 스튜디오").slice(0, 30), innerX, text.y + text.h - pad * 0.7);
+  ctx.fillText(String(card.footer || "뉴스픽 스튜디오").slice(0, 30), innerX, text.y + text.h - pad * 0.95);
   const total = opts.total || 8;
   const dotR = Math.max(3, Math.round(w * 0.0045));
   const gap = dotR * 4;
   const startX = innerX + innerW - (total - 1) * gap;
   for (let i = 0; i < total; i += 1) {
     ctx.beginPath();
-    ctx.arc(startX + i * gap, text.y + text.h - pad * 0.62, dotR, 0, Math.PI * 2);
+    ctx.arc(startX + i * gap, text.y + text.h - pad * 0.88, dotR, 0, Math.PI * 2);
     ctx.fillStyle = i === (card.no || 1) - 1 ? "#ffffff" : "rgba(255,255,255,0.32)";
     ctx.fill();
   }

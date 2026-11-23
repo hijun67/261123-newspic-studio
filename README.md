@@ -90,7 +90,7 @@ npx wrangler pages deploy dist --project-name newspic-studio --branch main
 |---|---|
 | 단위·API (`test.js`) | **155/155 통과** — 4컷·카드 4/6/8/10·6채널·ZIP, `/api/*` 전 경로, 피드 RSS/캐시/폴백, KV/폴백/차단 |
 | headless Chromium UI (`ui.test.js`) | **116/116 통과** — 1440·390px 오버플로 0, 콘솔 에러 0, 피드 원클릭, 장수 전환, 분할 레이아웃, 기사 내 이미지 4컷, 자동 생성 1회·타이머, 채널 다중 선택, PNG/ZIP |
-| 라이브 (`live-shots-v2.js`) | 실제 기사 미러링 → 피드 · 분할 카드 · 자동 생성 · 모바일 검증 |
+| 라이브 (`live-shots-v2.js`) | **23/23 통과** — 실제 RSS 피드 → 연합뉴스 미러링 → 6장 분할 카드 → 기사 이미지 4컷 → 자동 생성 1회 → 5채널 → 모바일 390px |
 
 ## 6. 파일 구조
 

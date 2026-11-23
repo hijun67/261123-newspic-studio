@@ -20,7 +20,7 @@ export function splitSentences(text, maxLen = 200) {
   if (!source) return [];
   const parts = source
     .split(/(?<=[.!?。？！])\s+|(?<=[다요죠니다])\s{2,}/)
-    .map((part) => part.trim())
+    .map((part) => stripDateline(part))
     .filter(Boolean);
   const out = [];
   for (const part of parts.length ? parts : [source]) {
@@ -57,10 +57,22 @@ export function stripEmoji(text) {
 }
 
 const NOISE = /(기사의 이해를 돕기 위한|기사 내용과 직접적인 연관|이미지로 기사 내용|사진은 기사 내용|자료사진|사진 ?[=:]|제공 ?[=:]|사진공동취재단|게티이미지|클립아트|무단 전재|재배포 금지|Copyright|ⓒ)/;
+const BYLINE_ONLY = /^[가-힣]{2,4}\s*(?:기자|특파원|앵커|논설위원)$/;
+const EMAIL_ONLY = /^[\w.+-]+@[\w.-]+$/;
 
 /** 사진 설명·저작권 안내처럼 기사 내용이 아닌 줄 */
 export function isNoiseLine(text) {
-  return NOISE.test(String(text || ""));
+  const value = String(text || "").trim();
+  if (BYLINE_ONLY.test(value) || EMAIL_ONLY.test(value)) return true;
+  return NOISE.test(value);
+}
+
+/** (서울=연합뉴스) · [부산=뉴시스] · 홍길동 기자 = 같은 머리말 제거 */
+export function stripDateline(text) {
+  let value = String(text || "").trim();
+  value = value.replace(/^[\[(（](?:[가-힣A-Za-z·\s]{1,20}=[가-힣A-Za-z·\s]{1,20})[)\]）]\s*/, "");
+  value = value.replace(/^[가-힣]{2,4}\s*(?:기자|특파원|앵커|논설위원)\s*=\s*/, "");
+  return value.trim();
 }
 
 export function sentencePool(article) {
@@ -350,6 +362,7 @@ export function buildCuts(article, partnerUrl = "") {
   const used = new Set();
   const ranked = scoreSentences(pool).map((item) => item.sentence);
   const ordered = [...pool.slice(0, 2), ...ranked];
+  const subtitle = stripDateline(isNoiseLine(article.subtitle) ? "" : clean(article.subtitle));
 
   const factLine = pick(ordered, used, 1)[0] || shorten(article.subtitle || article.title, 70);
   const twistLine =
@@ -371,7 +384,7 @@ export function buildCuts(article, partnerUrl = "") {
       narration: line,
       dialogue:
         index === 0
-          ? shorten((isNoiseLine(article.subtitle) ? "" : article.subtitle) || reaction, 46)
+          ? shorten(subtitle || reaction, 46)
           : reaction,
       speaker: meta.speaker,
       expression: meta.expression,
@@ -459,7 +472,7 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
   const ordered = [...pool.slice(0, 3), ...ranked];
   const tags = hashtags || buildHashtags(article);
   const title = clean(article.title);
-  const subtitle = isNoiseLine(article.subtitle) ? "" : clean(article.subtitle);
+  const subtitle = stripDateline(isNoiseLine(article.subtitle) ? "" : clean(article.subtitle));
 
   const summary = [];
   for (const sentence of ordered) {
