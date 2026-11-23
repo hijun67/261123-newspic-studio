@@ -282,7 +282,8 @@ async function handleUrl(payload, kv, tracking) {
   ]);
   const bodyHtml = extractBodyHtml(html);
   const paragraphs = htmlToParagraphs(bodyHtml);
-  const inlineImages = extractInlineImages(bodyHtml, finalUrl, 8);
+  /* 본문 블록을 잘못 고르는 페이지(프로모션 게이트웨이 등)를 대비해 문서 전체에서도 한 번 더 모은다. */
+  const inlineImages = [...extractInlineImages(bodyHtml, finalUrl, 8), ...extractInlineImages(html, finalUrl, 8)].filter(Boolean);
   const site = detectSite(html, finalUrl);
   const author = extractAuthor(html);
   const cleanTitle = cleanArticleTitle(title, site);

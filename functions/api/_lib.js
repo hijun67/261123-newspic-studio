@@ -629,7 +629,7 @@ export function absoluteUrl(src, base) {
 }
 
 /** 본문 안의 <img> 주소를 모은다. (4컷 배경 후보 — 최대 limit 장) */
-const IMAGE_SKIP = /(?:logo|icon|blank|spacer|btn_|button|sprite|pixel|ad_|banner|profile)/i;
+const IMAGE_SKIP = /(?:logo|icon|blank|spacer|btn_|button|sprite|pixel|ad_|banner|profile|promotion)/i;
 
 export function extractInlineImages(bodyHtml, base, limit = 8) {
   const out = [];
@@ -644,6 +644,7 @@ export function extractInlineImages(bodyHtml, base, limit = 8) {
     if (/\.(gif|svg)(\?|$)/i.test(url)) continue;
     if (IMAGE_SKIP.test(url)) continue;
     if (/\{\{|%7B%7B|image_profile|noimg|default_|placeholder/i.test(url)) continue;
+    if (/facebook\.com\/tr|google-analytics|doubleclick|googletagmanager/i.test(url)) continue;
     if (out.includes(url)) continue;
     out.push(url);
     if (out.length >= limit) break;
