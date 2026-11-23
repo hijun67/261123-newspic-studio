@@ -406,12 +406,36 @@ export function extractKeywords(article, limit = 5) {
     .map(([ko]) => ({ ko, en: englishFor(ko) }));
 }
 
-/** 이미지 프롬프트 맨 앞에 넣을 제목 키워드 줄 (영문 병기). */
+/** 이미지 프롬프트 맨 앞에 넣을 제목 키워드 줄 (영문만).
+ *  이미지 모델은 한글을 이해하지 못하므로 영문 매핑이 있는 키워드만 쓴다.
+ */
 export function keywordPromptLine(article, limit = 4) {
-  const keys = extractKeywords(article, limit);
+  const keys = extractKeywords(article, limit).filter((key) => key.en);
   if (!keys.length) return "";
-  const parts = keys.map((key) => (key.en ? `${key.en} (${key.ko})` : key.ko));
-  return "key subject: " + parts.join(", ");
+  const terms = [];
+  for (const key of keys) {
+    const en = String(key.en || "").trim();
+    if (en && !terms.includes(en)) terms.push(en);
+  }
+  if (!terms.length) return "";
+  return "key subject: " + terms.slice(0, limit).join(", ");
+}
+
+const HANGUL_RE = /[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7FF]/;
+
+/** 문자열에 한글이 섞였는지 */
+export function hasHangul(text) {
+  return HANGUL_RE.test(String(text || ""));
+}
+
+/** 한글·이모지를 걷어내 영문 프롬프트만 남긴다. */
+export function englishOnly(text) {
+  return String(text || "")
+    .replace(/[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7FF]+/g, " ")
+    .replace(/[^\x20-\x7E\n]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.])/g, "$1")
+    .trim();
 }
 
 const NOISE = /(기사의 이해를 돕기 위한|기사 내용과 직접적인 연관|이미지로 기사 내용|사진은 기사 내용|자료사진|사진 ?[=:]|제공 ?[=:]|사진공동취재단|게티이미지|클립아트|무단 전재|재배포 금지|Copyright|ⓒ)/;
@@ -584,9 +608,45 @@ const TOPICS = [
   },
   {
     id: "legal",
-    match: /(검찰|재판|법원|구속|기소|판결|수사)/,
+    match: /(검찰|재판|법원|구속|기소|판결|수사|경찰|범죄|사기)/,
     tags: ["사회", "법", "이슈"],
     scene: "the steps of a Korean courthouse at dusk with long shadows and a blurred crowd",
+  },
+  {
+    id: "trade",
+    match: /(수출|수입|무역|관세|통상|FTA|물동량|항만|항로|공급망|해운|선박|물류|조선)/,
+    tags: ["수출", "무역", "경제"],
+    scene: "a container port at dawn with stacked shipping containers, gantry cranes and a cargo ship being loaded",
+  },
+  {
+    id: "labor",
+    match: /(노동|임금|최저임금|파업|노조|근로|일자리|취업|채용)/,
+    tags: ["노동", "일자리", "사회"],
+    scene: "workers in uniforms gathered in a bright factory yard for a morning meeting, banners blurred behind",
+  },
+  {
+    id: "disaster",
+    match: /(화재|사고|붕괴|폭발|산불|지진|대피|구조|참사)/,
+    tags: ["사고", "재난", "안전"],
+    scene: "rescue workers in orange suits and fire trucks at a smoky accident site, emergency lights on wet asphalt",
+  },
+  {
+    id: "agri",
+    match: /(농업|농민|쌀|채소|과일|축산|가축|식품|식당|배달|김장)/,
+    tags: ["농업", "식품", "생활"],
+    scene: "a Korean farm field at golden hour with rows of crops, a farmer carrying a basket of produce",
+  },
+  {
+    id: "travel",
+    match: /(여행|관광|호텔|항공|공항|캠핑|등산|휴가|반려동물|강아지|고양이)/,
+    tags: ["여행", "일상", "여가"],
+    scene: "travelers with luggage in a bright airport terminal, an airplane visible through the tall windows",
+  },
+  {
+    id: "welfare",
+    match: /(복지|연금|저출생|고령|노인|인구|보육|출산|취약계층|지원금)/,
+    tags: ["복지", "인구", "사회"],
+    scene: "a multigenerational Korean family walking together in a city park, an elderly couple on a bench",
   },
 ];
 
@@ -687,11 +747,93 @@ export const STYLES = [
 ];
 
 const CUT_SHOTS = [
-  "wide establishing shot, dramatic sky, empty space at the top for a headline",
-  "medium shot focused on the key subject, clear balanced composition",
-  "close-up on a telling detail, slight dutch angle, surprising element",
-  "calm resolved scene, subject facing the viewer, thoughtful mood",
+  { lead: "wide establishing shot", focus: "a passerby stopping to look, surprised expression", mood: "curious, eye-catching opening", tail: "generous empty space at the top" },
+  { lead: "medium shot", focus: "documents and a chart laid out on a desk, hands pointing at a figure", mood: "clear and factual, documentary tone", tail: "balanced composition" },
+  { lead: "close-up detail shot", focus: "a telling detail that changes the story, contrasting light and shadow", mood: "surprising, slightly off-kilter angle", tail: "shallow depth of field" },
+  { lead: "calm forward-looking shot", focus: "people walking on with their day, warm late afternoon light", mood: "resolved and thoughtful", tail: "subject facing the viewer" },
 ];
+
+/* 카드 종류별 영문 장면 힌트 (한글 금지) */
+const CARD_SHOT_HINTS = {
+  cover: { lead: "wide cinematic establishing shot", focus: "generous open space at the top, uncluttered background", mood: "dramatic first impression" },
+  summary: { lead: "editorial triptych composition", focus: "three everyday moments that summarize the story", mood: "clean and organized" },
+  background: { lead: "medium environmental shot", focus: "city skyline and commuting crowd setting the backstory", mood: "reflective" },
+  numbers: { lead: "top-down desk shot", focus: "abstract bar and line chart shapes without any labels, a calculator and coins", mood: "analytical" },
+  facts: { lead: "close-up desk shot", focus: "documents, a smartphone and a pen arranged neatly", mood: "trustworthy" },
+  detail: { lead: "macro close-up", focus: "a hand pointing at a printed page, shallow focus", mood: "intimate detail" },
+  issue: { lead: "two-shot conversation", focus: "two people across a table, one gesturing while the other listens", mood: "tension and debate" },
+  comparison: { lead: "split composition", focus: "left side bright and warm, right side cool shadow, same scene twice", mood: "contrast" },
+  checklist: { lead: "morning desk shot", focus: "a hand ticking items in a notebook beside a coffee cup", mood: "practical and calm" },
+  cta: { lead: "lifestyle shot", focus: "a person holding a smartphone in a cozy cafe, screen glow on the face", mood: "inviting" },
+};
+
+const PROMPT_GUARD = "no text, no letters, no watermark, no logo, no caption";
+
+function promptParts(parts) {
+  return parts.map((part) => englishOnly(part)).filter(Boolean).join(", ");
+}
+
+function withGuard(prompt) {
+  const body = String(prompt || "").replace(/[,\s]+$/, "");
+  return body + ", " + PROMPT_GUARD;
+}
+
+function sceneFromSentences(article, sentence) {
+  const profile = topicProfile(article);
+  const detail = /(숫자|원|%|명|가구)/.test(sentence) ? "documents with highlighted figures on a desk" : "";
+  return detail ? `${profile.scene}, ${detail}` : profile.scene;
+}
+
+/** 4컷 한 컷의 영문 프롬프트 (한글 없음 · 컷마다 다른 장면). */
+export function cutPrompt(cut, styleId, article) {
+  const style = STYLES.find((item) => item.id === styleId) || STYLES[0];
+  const index = Math.max(0, Math.min(3, Number(cut && cut.index ? cut.index - 1 : 0)));
+  const shot = CUT_SHOTS[index];
+  const scene = cut.scene || sceneFromSentences(article, cut.narration || "");
+  const subject = cut.visual ? "of " + cut.visual : "";
+  const keyLine =
+    cut.keywordPrompt === false
+      ? ""
+      : cut.keywordPrompt && typeof cut.keywordPrompt === "string"
+        ? cut.keywordPrompt
+        : keywordPromptLine(article, 4);
+  return withGuard(
+    promptParts([
+      keyLine,
+      shot.lead,
+      scene,
+      subject,
+      shot.focus,
+      shot.mood,
+      shot.tail,
+      style.prompt,
+    ])
+  );
+}
+
+/** 카드 한 장의 영문 프롬프트 (한글 없음 · 카드마다 다른 장면). */
+export function cardImagePrompt(card, styleId, article, index = 0, total = 8) {
+  const style = STYLES.find((item) => item.id === styleId) || STYLES[0];
+  const kind = (card && card.kind) || "facts";
+  const hint = CARD_SHOT_HINTS[kind] || CARD_SHOT_HINTS.facts;
+  const profile = topicProfile(article || {});
+  const scene = (card && card.scene) || profile.scene;
+  const keyLine = keywordPromptLine(article || {}, 4);
+  const subjects = extractKeywords(article || {}, 5).filter((key) => key.en);
+  const keyword = subjects.length ? subjects[index % subjects.length].en : "";
+  return withGuard(
+    promptParts([
+      keyLine,
+      hint.lead,
+      scene,
+      hint.focus,
+      keyword ? "focus on " + keyword : "",
+      hint.mood,
+      kind === "cover" ? "vertical composition" : "centered subject, clean background",
+      style.prompt,
+    ])
+  );
+}
 
 const ROLE_META = [
   { role: "hook", label: "훅", expression: "놀람", speaker: "독자" },
@@ -706,22 +848,6 @@ const REACTIONS = {
   twist: ["여기서 반전이네.", "디테일이 만만치 않은데?", "그럼 우리는?"],
   ending: ["자세한 건 첫 댓글에서!", "결국 관건은 이거네.", "저장해 두고 다시 보자."],
 };
-
-function sceneFromSentences(article, sentence) {
-  const profile = topicProfile(article);
-  const detail = /(숫자|원|%|명|가구)/.test(sentence) ? "a document with charts and highlighted numbers on a desk" : "";
-  return detail ? `${profile.scene}, ${detail}` : profile.scene;
-}
-
-export function cutPrompt(cut, styleId, article) {
-  const style = STYLES.find((item) => item.id === styleId) || STYLES[0];
-  const shot = CUT_SHOTS[cut.index - 1] || CUT_SHOTS[0];
-  const scene = cut.scene || sceneFromSentences(article, cut.narration || "");
-  const subject = cut.visual ? ` of ${cut.visual}` : "";
-  const keyLine = (cut.keywordPrompt !== false && (cut.keywordPrompt || keywordPromptLine(article, 4))) || "";
-  const head = keyLine ? keyLine + ", " : "";
-  return `${head}${shot}${subject}, ${scene}, ${style.prompt}, no text, no letters, no watermark, no logo, no caption, 16:9 composition`;
-}
 
 /** 본문이 배너뿐이거나 이미지 중심인 기사: 제목·키워드로 4컷/카드 문장을 만든다. */
 function withQuoteParticle(word) {
@@ -790,7 +916,7 @@ export function buildCuts(article, partnerUrl = "") {
       speaker: meta.speaker,
       expression: meta.expression,
       visual: "",
-      scene: "",
+      scene: topicProfile(article).scene,
       keywords: keywords.map((key) => key.ko),
       keywordPrompt,
       aiPrompt: "",
@@ -1002,12 +1128,16 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
     },
   };
 
-  return CARD_SEQUENCES[count].map((kind, index) => ({
-    ...byKind[kind],
-    no: index + 1,
-    index,
-    kindLabel: CARD_KIND_LABELS[kind] || kind,
-  }));
+  return CARD_SEQUENCES[count].map((kind, index) => {
+    const card = {
+      ...byKind[kind],
+      no: index + 1,
+      index,
+      kindLabel: CARD_KIND_LABELS[kind] || kind,
+    };
+    card.imagePrompt = cardImagePrompt(card, "photo", article, index, CARD_SEQUENCES[count].length);
+    return card;
+  });
 }
 
 /* ------------------------------------------------------------------ *

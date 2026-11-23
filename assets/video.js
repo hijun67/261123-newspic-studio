@@ -58,7 +58,7 @@ export async function recordSlideshow({
     off.width = info.width;
     off.height = info.height;
     const octx = off.getContext("2d");
-    const visual = visuals.length ? visuals[index % visuals.length] : card.kind === "cover" ? imageEl : null;
+    const visual = visuals.length ? visuals[index] || (card.kind === "cover" ? imageEl : null) : card.kind === "cover" ? imageEl : null;
     drawCard(octx, info.width, info.height, card, theme, visual, { total: cards.length, layout, index });
     return off;
   });

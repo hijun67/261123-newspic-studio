@@ -9,7 +9,7 @@ export async function onRequest(context) {
   const data = {
     ok: true,
     service: "newspic-studio",
-    version: "1.2.0",
+    version: "1.3.0",
     time: new Date().toISOString(),
     features: {
       mirror: true,
@@ -32,6 +32,15 @@ export async function onRequest(context) {
       cardTitleScale: 0.9,
       cardBodyScale: 0.7,
       imageModes: ["ai", "article"],
+      cardImageModes: ["ai", "article"],
+      cardImages: true,
+      promptBuilder: true,
+      promptModels: [
+        "@cf/meta/llama-3.1-8b-instruct",
+        "@cf/qwen/qwen2.5-7b-instruct",
+        "@cf/meta/llama-3.2-3b-instruct",
+      ],
+      englishOnlyPrompts: true,
       autoGenerate: true,
       channels: 6,
       channelAccounts: true,

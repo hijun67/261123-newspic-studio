@@ -177,6 +177,7 @@
         <div class="studio-tools">
           <div class="chip-row" id="styleRow" role="group" aria-label="그림 스타일"></div>
           <div class="chip-row" id="imageModeRow" role="group" aria-label="4컷 이미지 소스"></div>
+          <span id="promptBadge" class="pill local">프롬프트 —</span>
           <div class="chip-row" id="layoutRow" role="group" aria-label="합본 배치"></div>
           <div class="chip-row" id="keywordRow" role="group" aria-label="제목 키워드"></div>
           <button id="cutsToChannel" class="btn primary" type="button">채널로 →</button>
@@ -240,6 +241,8 @@
           <div class="chip-row" id="cardLayoutRow" role="group" aria-label="카드 레이아웃"></div>
           <div class="chip-row" id="themeRow" role="group" aria-label="디자인 테마"></div>
           <div class="chip-row" id="ratioRow" role="group" aria-label="비율"></div>
+          <div class="chip-row" id="cardImageModeRow" role="group" aria-label="카드 이미지 소스"></div>
+          <span id="cardPromptBadge" class="pill local">프롬프트 —</span>
           <button id="cardsToChannel" class="btn primary" type="button">채널로 →</button>
         </div>
       </div>
@@ -262,7 +265,13 @@
             <button id="downloadZip" class="btn primary" type="button">ZIP 저장</button>
             <button id="cardsToChannelBottom" class="btn" type="button">채널로 →</button>
           </div>
-          <label class="switch"><input id="useArticleImage" type="checkbox" checked> 표지에 기사 이미지 사용</label>
+          <div class="row wrap">
+            <button id="cardImagesFill" class="btn primary" type="button">🖼️ 카드 이미지 채우기</button>
+            <button id="cardImageClear" class="btn ghost" type="button">이미지 지우기</button>
+            <span id="cardImageStatus" class="tiny">이미지 없음</span>
+          </div>
+          <div class="progress" id="cardImageProgress" hidden><div class="bar"></div><span>0%</span></div>
+          <p class="hint">기사 내 이미지 모드는 본문 사진을 카드 순서대로 배분하고, 모자란 카드는 기사 본문 기반 AI 이미지로 채웁니다. AI 알아서 생성 모드는 카드마다 다른 장면을 만듭니다.</p>
         </div>
         <div class="slide-editor card">
           <div class="card-head"><h2>문구 편집</h2><span id="editorKind" class="tiny">표지</span></div>
@@ -270,6 +279,12 @@
           <label class="field" for="cardTitleInput"><span>제목</span><textarea id="cardTitleInput" rows="2"></textarea></label>
           <label class="field" for="cardLines"><span>본문 · 한 줄에 하나씩</span><textarea id="cardLines" rows="6"></textarea></label>
           <label class="field" for="cardFooter"><span>바닥 문구</span><input id="cardFooter" autocomplete="off"></label>
+          <label class="field" for="cardImageSource"><span>이 카드 이미지</span><select id="cardImageSource"></select></label>
+          <label class="field" for="cardImagePrompt"><span>AI 이미지 프롬프트 (영문)</span><textarea id="cardImagePrompt" rows="4"></textarea></label>
+          <div class="row wrap">
+            <button id="cardImageApply" class="btn primary" type="button">✨ 이 카드 AI 이미지</button>
+            <button id="cardImageReset" class="btn ghost" type="button">프롬프트 새로</button>
+          </div>
           <button id="resetCard" class="btn ghost" type="button">이 카드 자동 문구로 되돌리기</button>
         </div>
       </div>

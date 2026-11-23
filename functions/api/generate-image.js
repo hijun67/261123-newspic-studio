@@ -6,9 +6,12 @@
  *    provider "gemini" : BYOK (Google AI Studio 키)
  *
  *  free 경로는 Workers AI 바인딩(AI) → Pollinations 순서로 시도한다.
- *  응답 {ok:true, dataUrl, provider, ms} 또는 {ok:false, mode:"fallback", reason}
+ *  응답 {ok:true, dataUrl, provider, prompt, ms} 또는 {ok:false, mode:"fallback", reason}
  *  이미지는 항상 base64 data URL 로 돌려주어 캔버스 저장(tainted canvas) 문제를 없앤다.
+ *  프롬프트에 섞여 들어온 한글·이모지는 sanitizePrompt 가 영문만 남기고 걷어낸다.
  */
+import { sanitizePrompt } from "./_prompt.js";
+
 const TIMEOUT_FREE = 28000;
 const TIMEOUT_BYOK = 45000;
 const MAX_PROMPT = 1200;
@@ -155,10 +158,11 @@ export async function onRequest(context) {
   } catch (e) {
     return json({ ok: false, code: "bad_json", message: "요청 본문을 읽지 못했습니다." }, 400);
   }
-  const prompt = String((payload && payload.prompt) || "").trim().slice(0, MAX_PROMPT);
-  if (prompt.length < 6) {
+  const rawPrompt = String((payload && payload.prompt) || "").trim().slice(0, MAX_PROMPT);
+  if (rawPrompt.length < 6) {
     return json({ ok: false, code: "empty_prompt", message: "이미지 프롬프트가 비어 있습니다." }, 400);
   }
+  const prompt = sanitizePrompt(rawPrompt);
   const width = clamp(payload.width, 256, 1280, 1024);
   const height = clamp(payload.height, 256, 1280, 1024);
   const seed = clamp(payload.seed, 1, 999999, Math.floor(Math.random() * 999999) + 1);
@@ -180,21 +184,21 @@ export async function onRequest(context) {
         provider === "openai"
           ? await generateOpenAI(prompt, size, apiKey, payload.model)
           : await generateGemini(prompt, apiKey, payload.model);
-      return json({ ok: true, dataUrl, provider, ms: Date.now() - started });
+      return json({ ok: true, dataUrl, provider, prompt, ms: Date.now() - started });
     }
 
     let workersAiError = "";
     if (env && env.AI && typeof env.AI.run === "function") {
       try {
         const dataUrl = await generateWorkersAi(env, prompt);
-        return json({ ok: true, dataUrl, provider: "workers-ai", ms: Date.now() - started });
+        return json({ ok: true, dataUrl, provider: "workers-ai", prompt, ms: Date.now() - started });
       } catch (error) {
         workersAiError = String((error && error.message) || error);
       }
     }
     try {
       const dataUrl = await generateFree(prompt, width, height, seed);
-      return json({ ok: true, dataUrl, provider: "free", ms: Date.now() - started });
+      return json({ ok: true, dataUrl, provider: "free", prompt, ms: Date.now() - started });
     } catch (error) {
       throw new Error((error && error.message) || workersAiError || "free image failed");
     }

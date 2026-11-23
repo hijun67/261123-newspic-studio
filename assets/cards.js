@@ -896,6 +896,41 @@ function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
  * 카드 1장
  * ------------------------------------------------------------------ */
 
+function colorWithAlpha(hex, alpha) {
+  const match = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+  if (!match) return `rgba(0,0,0,${alpha})`;
+  const num = parseInt(match[1], 16);
+  return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+}
+
+/** 전면형 카드의 배경 사진 — 카드마다 다른 이미지를 은은한 질감으로 깔아
+ *  패널·제목 글자가 읽히는 대비를 유지한다. */
+function paintImageBackdrop(ctx, w, h, theme, imageEl, opts = {}) {
+  if (!imageEl || !imageEl.naturalWidth) return false;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, w, h);
+  ctx.clip();
+  const scale = Math.max(w / imageEl.naturalWidth, h / imageEl.naturalHeight);
+  const dw = imageEl.naturalWidth * scale;
+  const dh = imageEl.naturalHeight * scale;
+  ctx.drawImage(imageEl, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  ctx.fillStyle = colorWithAlpha(theme.bg, Number(opts.wash) || 0.56);
+  ctx.fillRect(0, 0, w, h);
+  const top = ctx.createLinearGradient(0, 0, 0, h * 0.6);
+  top.addColorStop(0, colorWithAlpha(theme.bg, 0.62));
+  top.addColorStop(1, colorWithAlpha(theme.bg, 0));
+  ctx.fillStyle = top;
+  ctx.fillRect(0, 0, w, h * 0.6);
+  const bottom = ctx.createLinearGradient(0, h * 0.68, 0, h);
+  bottom.addColorStop(0, colorWithAlpha(theme.bg, 0));
+  bottom.addColorStop(1, colorWithAlpha(theme.bg, 0.55));
+  ctx.fillStyle = bottom;
+  ctx.fillRect(0, h * 0.68, w, h * 0.32);
+  ctx.restore();
+  return true;
+}
+
 export function drawCard(ctx, w, h, card, themeId, imageEl, opts = {}) {
   const theme = cardTheme(themeId);
   const pad = Math.round(w * 0.075);
@@ -925,6 +960,7 @@ export function drawCard(ctx, w, h, card, themeId, imageEl, opts = {}) {
   }
 
   paintPattern(ctx, w, h, theme);
+  if (imageEl && imageEl.naturalWidth) paintImageBackdrop(ctx, w, h, theme, imageEl, opts);
   drawHeader(ctx, w, pad, theme, card);
 
   if (card.kind === "summary") drawSummary(ctx, w, h, pad, theme, card);

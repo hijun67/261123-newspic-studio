@@ -628,28 +628,156 @@ export function absoluteUrl(src, base) {
   }
 }
 
-/** 본문 안의 <img> 주소를 모은다. (4컷 배경 후보 — 최대 limit 장) */
-const IMAGE_SKIP = /(?:logo|icon|blank|spacer|btn_|button|sprite|pixel|ad_|banner|profile|promotion)/i;
+/* ------------------------------------------------------------------ *
+ * 기사 본문 이미지 — 사이드바·추천기사·광고 썸네일을 걷어낸다
+ * ------------------------------------------------------------------ */
 
-export function extractInlineImages(bodyHtml, base, limit = 8) {
+/* 파일명·경로로 걸러지는 것: 로고, 아이콘, 추적 픽셀, 광고, 프로필·기자 사진, 기본 썸네일 */
+const IMAGE_SKIP =
+  /(?:logo|wordmark|icon|blank|spacer|btn_|button|sprite|pixel|tracking|ad_|\/ads?\/|banner|profile|reporter|author_?thumb|avatar|promotion|promo_|default_|noimg|no_img|placeholder|transparent|sns_|share_|subscribe)/i;
+
+/* 이미지 앞쪽 HTML 문맥으로 걸러지는 것: 관련기사·추천·인기·사이드바·푸터·광고 영역 */
+const IMAGE_CONTEXT_NOISE =
+  /(related|recommend|sidebar|side-?bar|aside|footer|popular|most[_-]?viewed|mostview|ranking|hotnews|hot_news|news_?list|list-type|thumbnail[_-]?list|item-box|swiper|news-con|sns|share|subscribe|banner|advert|promo|관련\s*기사|추천\s*기사|인기\s*기사|많이\s*본|광고|배너|구독)/i;
+
+/* alt/제목이 이런 값이면 기사 사진이 아니다 (로고·아이콘·광고류만) */
+const IMAGE_ALT_NOISE = /^(?:로고|아이콘|광고|배너|기사\s*이미지\s*없음|no\s*image|logo|icon|ad|banner|spacer|blank)$/i;
+
+function tagAttribute(tag, names) {
+  for (const name of names) {
+    const re = new RegExp("\\b" + name + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'>]+))", "i");
+    const m = re.exec(tag);
+    if (m) return decodeEntities(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+  }
+  return "";
+}
+
+function isNoiseImageUrl(url) {
+  if (!url) return true;
+  if (!/^https?:/i.test(url)) return true;
+  if (/\.(gif|svg)(\?|$)/i.test(url)) return true;
+  if (/\{\{|%7B%7B|image_profile|noimg|default_|placeholder/i.test(url)) return true;
+  if (/facebook\.com\/tr|google-analytics|doubleclick|googletagmanager/i.test(url)) return true;
+  return IMAGE_SKIP.test(url);
+}
+
+/** <img> 태그 앞쪽 HTML에서 아직 열려 있는 컨테이너 태그(클래스 포함)를 모은다. */
+function containerChain(before) {
+  const window = String(before || "").slice(-1500);
+  const re = /<(?:section|aside|li|ul|ol|div|figure|header|footer)\b[^>]*>/gi;
+  const opens = [];
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(window))) opens.push(m[0]);
+  return opens.slice(-8).join(" ");
+}
+
+function insideListItem(before) {
+  const window = String(before || "").slice(-2000);
+  const open = window.lastIndexOf("<li");
+  if (open < 0) return false;
+  return open > window.lastIndexOf("</li>");
+}
+
+/** 아직 닫히지 않은 가장 가까운 <section>/<aside> 태그(클래스 포함).
+ *  핫뉴스·관련기사 블록은 <section class="box-hotnews01"> 같은 큰 껍데기 안에 있어서
+ *  가까운 div 만 보면 놓친다. */
+function nearestSectionTag(before) {
+  const window = String(before || "").slice(-6000);
+  const re = /<(section|aside)\b[^>]*>/gi;
+  let m;
+  let last = "";
+  let lastIndex = -1;
+  while ((m = re.exec(window))) {
+    last = m[0];
+    lastIndex = m.index;
+  }
+  if (!last) return "";
+  const name = /^<(\w+)/.exec(last)[1].toLowerCase();
+  if (new RegExp("</" + name + ">", "i").test(window.slice(lastIndex + last.length))) return "";
+  return last;
+}
+
+/** <img> 태그 하나가 기사 사진인지 판단한다. context 는 태그 앞쪽 HTML. */
+function imageTagVerdict(tag, url, context = "", opts = {}) {
+  if (isNoiseImageUrl(url)) return false;
+  const width = Number(tagAttribute(tag, ["width"])) || 0;
+  const height = Number(tagAttribute(tag, ["height"])) || 0;
+  if ((width && width < 120) || (height && height < 90)) return false;
+  const alt = normalizeSpace(tagAttribute(tag, ["alt", "title"]));
+  if (alt && alt.length <= 8 && IMAGE_ALT_NOISE.test(alt)) return false;
+  const chain = containerChain(context);
+  if (IMAGE_CONTEXT_NOISE.test(chain)) return false;
+  if (IMAGE_CONTEXT_NOISE.test(nearestSectionTag(context))) return false;
+  if (!opts.requireContainer) return true;
+  /* 문서 전체를 훑을 때는 목록(<li>) 아이템과 사진 블록만 허용 — 사이드바·핫뉴스 목록을 건진다. */
+  if (insideListItem(context)) return false;
+  const tail = String(context || "").slice(-320);
+  const insideFigure = tail.lastIndexOf("<figure") > tail.lastIndexOf("</figure>");
+  const insidePicture = tail.lastIndexOf("<picture") > tail.lastIndexOf("</picture>");
+  const photoBlock = /(?:class\s*=\s*["'][^"']*(?:photo|img|image|pic)[^"']*["']|data-pop-open|itemprop\s*=\s*["']image)/i.test(tail);
+  return insideFigure || insidePicture || photoBlock;
+}
+
+/** 본문 안의 <img> 주소를 모은다. (4컷 배경 후보 — 최대 limit 장)
+ *  opts.requireContainer: 문서 전체를 훑을 때 사진 블록 안의 이미지만 허용
+ */
+export function extractInlineImages(bodyHtml, base, limit = 8, opts = {}) {
   const out = [];
+  const source = String(bodyHtml || "");
   const re = /<img\b[^>]*>/gi;
   let m;
-  while ((m = re.exec(String(bodyHtml || "")))) {
+  while ((m = re.exec(source))) {
     const tag = m[0];
-    const srcMatch = /\b(?:data-src|data-original|data-lazy-src|src)\s*=\s*["']([^"']+)["']/i.exec(tag);
+    const srcMatch = /\b(?:data-src|data-original|data-lazy-src|data-lazy|src)\s*=\s*["']([^"']+)["']/i.exec(tag);
     if (!srcMatch) continue;
     const url = decodeEntities(absoluteUrl(srcMatch[1], base));
-    if (!/^https?:/i.test(url)) continue;
-    if (/\.(gif|svg)(\?|$)/i.test(url)) continue;
-    if (IMAGE_SKIP.test(url)) continue;
-    if (/\{\{|%7B%7B|image_profile|noimg|default_|placeholder/i.test(url)) continue;
-    if (/facebook\.com\/tr|google-analytics|doubleclick|googletagmanager/i.test(url)) continue;
+    if (!imageTagVerdict(tag, url, source.slice(0, m.index), opts)) continue;
     if (out.includes(url)) continue;
     out.push(url);
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/** 같은 사진이 CDN 서브도메인만 다르게 중복되는 경우를 묶기 위한 키. */
+function imageKey(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.length > 12 ? parsed.pathname + parsed.search : parsed.hostname + parsed.pathname;
+  } catch (e) {
+    return url;
+  }
+}
+
+/**
+ * 기사 이미지 목록을 만든다.
+ *  1) 대표 이미지(og:image/twitter:image) — 유효할 때만, 목록 맨 앞
+ *  2) 기사 본문 영역(bodyHtml) 안의 사진
+ *  3) 본문 사진이 2장 미만일 때만 문서 전체에서 사진 블록 안의 이미지를 보강
+ * 사이드바·추천기사·관련기사·광고·아이콘·로고·추적 픽셀은 포함하지 않는다.
+ */
+export function extractArticleImages({ bodyHtml = "", html = "", ogImage = "", base = "", limit = 8, ogWidth = 0 } = {}) {
+  const body = extractInlineImages(bodyHtml, base, limit);
+  const out = [];
+  const seen = new Set();
+  const push = (url) => {
+    if (!url) return;
+    const key = imageKey(url);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(url);
+  };
+
+  const og = absoluteUrl(ogImage, base);
+  const ogValid = og && !isNoiseImageUrl(og) && (!ogWidth || ogWidth >= 400);
+  if (ogValid) push(og);
+  for (const url of body) push(url);
+
+  if (out.length < Math.min(3, limit)) {
+    for (const url of extractInlineImages(html, base, limit * 2, { requireContainer: true })) push(url);
+  }
+  return out.slice(0, limit);
 }
 
 /** 기사 작성자(바이라인)를 찾는다. */

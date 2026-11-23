@@ -14,6 +14,7 @@ import {
   buildDraft,
   detectSite,
   extractAuthor,
+  extractArticleImages,
   extractBodyHtml,
   extractInlineImages,
   extractMeta,
@@ -282,8 +283,8 @@ async function handleUrl(payload, kv, tracking) {
   ]);
   const bodyHtml = extractBodyHtml(html);
   const paragraphs = htmlToParagraphs(bodyHtml);
-  /* 본문 블록을 잘못 고르는 페이지(프로모션 게이트웨이 등)를 대비해 문서 전체에서도 한 번 더 모은다. */
-  const inlineImages = [...extractInlineImages(bodyHtml, finalUrl, 8), ...extractInlineImages(html, finalUrl, 8)].filter(Boolean);
+  /* 기사 본문 이미지만 쓴다. 사이드바·추천기사 썸네일은 문서 전체 스캔에서도 사진 블록으로 한정해 걸러낸다. */
+  const ogWidth = Number(extractMeta(html, ["og:image:width", "twitter:image:width"]) || 0) || 0;
   const site = detectSite(html, finalUrl);
   const author = extractAuthor(html);
   const cleanTitle = cleanArticleTitle(title, site);
@@ -303,6 +304,14 @@ async function handleUrl(payload, kv, tracking) {
     warnings.push("본문을 찾지 못해 제목과 요약만 저장했습니다. 본문을 붙여넣으면 더 좋아집니다.");
   }
 
+  const bodyImages = extractArticleImages({
+    bodyHtml,
+    html,
+    ogImage: image,
+    base: finalUrl,
+    limit: 8,
+    ogWidth,
+  });
   const article = makeArticle({
     title: cleanTitle,
     subtitle,
@@ -310,8 +319,8 @@ async function handleUrl(payload, kv, tracking) {
     body: paragraphs.length ? "" : subtitle,
     url: finalUrl,
     image,
-    images: [image, ...inlineImages].filter(Boolean),
-    bodyImages: [image, ...inlineImages].filter(Boolean),
+    images: bodyImages,
+    bodyImages,
     site,
     author,
     publishedAt,

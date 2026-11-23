@@ -15,6 +15,7 @@ import {
   buildStoryboard,
   buildZip,
   cutPrompt,
+  cardImagePrompt,
   extractKeywords,
   finishSentence,
   keywordPromptLine,
@@ -60,6 +61,7 @@ const state = {
   activePlatform: "threads",
   style: "photo",
   imageMode: "article",
+  cardImageMode: "article",
   layout: "grid",
   cardTheme: "magazine",
   cardCount: 8,
@@ -68,6 +70,11 @@ const state = {
   activeCard: 0,
   images: {},
   imageMeta: {},
+  cardImages: [],
+  cardImageMeta: [],
+  proxyCache: {},
+  promptSource: "",
+  promptToken: 0,
   articleImageEl: null,
   partnerCode: "",
   storage: "unknown",
@@ -636,6 +643,11 @@ async function setArticle(article, { fromArchive = false } = {}) {
   state.activeCard = 0;
   state.images = {};
   state.imageMeta = {};
+  state.cardImages = state.cards.map(() => null);
+  state.cardImageMeta = state.cards.map(() => ({}));
+  state.proxyCache = {};
+  state.promptSource = "";
+  state.activeCard = 0;
   state.articleImageEl = null;
   state.slideshowUrl = "";
   state.keywordOff = [];
@@ -645,6 +657,10 @@ async function setArticle(article, { fromArchive = false } = {}) {
   renderWorkspace();
   await loadArticleImage();
   if (!fromArchive) await refreshArchive($("archiveSearch").value || "");
+  /* 본문 이미지를 카드에 순서대로 배분(비용 없음) → 부족한 카드는 버튼을 누를 때 채운다. */
+  distributeCardArticleImages({ silent: true }).catch(() => {});
+  /* 기사 본문 기반 영문 프롬프트를 백그라운드로 받아온다(Workers AI). 실패해도 기본 프롬프트 유지. */
+  preparePrompts().catch(() => {});
 }
 
 /** 기사 본문 이미지 목록 (대표 이미지 포함 최대 8장) */
@@ -1334,6 +1350,20 @@ function renderChips() {
     }
   }
 
+  const cardImageModeRow = $("cardImageModeRow");
+  if (cardImageModeRow) {
+    cardImageModeRow.textContent = "";
+    for (const mode of IMAGE_MODES) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip" + (state.cardImageMode === mode.id ? " active" : "");
+      button.dataset.cardImageMode = mode.id;
+      button.title = mode.hint;
+      button.textContent = `${mode.emoji} ${mode.name}`;
+      cardImageModeRow.appendChild(button);
+    }
+  }
+
   const chapterRow = $("chapterRow");
   if (chapterRow) {
     chapterRow.textContent = "";
@@ -1527,8 +1557,10 @@ function updateCutFromInput(target) {
   else if (fieldName === "cut-dialogue") cut.dialogue = target.value;
   else if (fieldName === "cut-speaker") cut.speaker = target.value;
   else if (fieldName === "cut-expression") cut.expression = target.value;
-  else if (fieldName === "cut-prompt") cut.aiPrompt = target.value;
-  else return;
+  else if (fieldName === "cut-prompt") {
+    cut.aiPrompt = target.value;
+    cut.promptEdited = true;
+  } else return;
   renderComic();
 }
 
@@ -1549,15 +1581,13 @@ function renderComic() {
   else status.textContent = `AI ${aiCount}/4 · 나머지 Canvas 폴백`;
 }
 
-async function generateCutImage(cut) {
-  const styleId = state.style;
-  const prompt = (cut.aiPrompt && cut.aiPrompt.trim()) || cutPrompt(cut, styleId, state.article);
+async function requestImage(prompt, { width = 1024, height = 1024 } = {}) {
   const byok = state.byok;
   const useByok = byok.provider !== "free" && ((byok.provider === "openai" && byok.openai) || (byok.provider === "gemini" && byok.gemini));
   const body = {
     prompt,
-    width: 1024,
-    height: 1024,
+    width,
+    height,
     seed: Math.floor(Math.random() * 900000) + 1000,
     provider: useByok ? byok.provider : "free",
   };
@@ -1573,20 +1603,243 @@ async function generateCutImage(cut) {
   }
   if (result.data && result.data.ok && result.data.dataUrl) {
     const image = await loadImage(result.data.dataUrl);
-    if (image) {
-      state.images[cut.index] = image;
-      state.imageMeta[cut.index] = { ai: true, provider: result.data.provider };
-      updateCutImageState(cut.index, true);
-      renderComic();
-      return { ok: true };
-    }
+    if (image) return { ok: true, image, provider: result.data.provider, prompt: result.data.prompt || prompt };
   }
-  delete state.images[cut.index];
-  state.imageMeta[cut.index] = { ai: false, reason: (result.data && result.data.reason) || "생성 실패" };
-  updateCutImageState(cut.index, false);
-  renderComic();
   return { ok: false, reason: (result.data && result.data.reason) || "이미지를 만들지 못했습니다." };
 }
+
+async function generateCutImage(cut) {
+  const prompt = (cut.aiPrompt && cut.aiPrompt.trim()) || cutPrompt(cut, state.style, state.article);
+  const result = await requestImage(prompt);
+  if (result.ok) {
+    state.images[cut.index] = result.image;
+    state.imageMeta[cut.index] = { ai: true, provider: result.provider };
+    updateCutImageState(cut.index, true);
+    renderComic();
+    return { ok: true };
+  }
+  delete state.images[cut.index];
+  state.imageMeta[cut.index] = { ai: false, reason: result.reason };
+  updateCutImageState(cut.index, false);
+  renderComic();
+  return { ok: false, reason: result.reason };
+}
+
+/* ------------------------------------------------------------------ *
+ * 카드뉴스 이미지 (기사 본문 배분 · 카드별 AI 생성)
+ * ------------------------------------------------------------------ */
+
+function resetCardImages(silent = false) {
+  state.cardImages = state.cards.map(() => null);
+  state.cardImageMeta = state.cards.map(() => ({}));
+  if (!silent) {
+    renderCardPreview();
+    renderCardImageControls();
+    updateCardImageStatus();
+  }
+}
+
+/** 기사 본문 이미지를 카드 순서대로 배분한다(프록시만 사용, AI 호출 없음). */
+async function distributeCardArticleImages({ progress = null, silent = false } = {}) {
+  const urls = state.articleImages || [];
+  if (!state.cards.length) return 0;
+  if (state.cardImages.length !== state.cards.length) resetCardImages(true);
+  let assigned = 0;
+  for (let i = 0; i < state.cards.length && i < urls.length; i += 1) {
+    if (state.cardImages[i] && state.cardImageMeta[i] && state.cardImageMeta[i].mode === "article") continue;
+    const image = await proxyArticleImage(urls[i]);
+    if (!image) continue;
+    state.cardImages[i] = image;
+    state.cardImageMeta[i] = { mode: "article", url: urls[i] };
+    assigned += 1;
+    if (progress) setProgress(progress, assigned / Math.max(state.cards.length, 1));
+  }
+  if (!silent) {
+    renderCardPreview();
+    renderCardImageControls();
+    updateCardImageStatus();
+  }
+  return assigned;
+}
+
+async function generateCardImage(index) {
+  const card = state.cards[index];
+  if (!card) return { ok: false, reason: "카드가 없습니다." };
+  const prompt =
+    (card.imagePrompt && card.imagePrompt.trim()) ||
+    cardImagePrompt(card, state.style, state.article, index, state.cards.length);
+  const result = await requestImage(prompt, { width: 1080, height: 1350 });
+  if (result.ok) {
+    state.cardImages[index] = result.image;
+    state.cardImageMeta[index] = { mode: "ai", provider: result.provider };
+    if (state.activeCard === index) renderCardPreview();
+    renderCardImageControls();
+    updateCardImageStatus();
+    return { ok: true };
+  }
+  state.cardImageMeta[index] = { ...(state.cardImageMeta[index] || {}), reason: result.reason };
+  updateCardImageStatus();
+  return { ok: false, reason: result.reason };
+}
+
+/** 모자란 카드만 AI로 채운다. */
+async function fillCardImages() {
+  if (!state.article || state.busy) return;
+  state.busy = true;
+  const button = $("cardImagesFill");
+  const progress = $("cardImageProgress");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "채우는 중…";
+  }
+  let filled = 0;
+  let lastReason = "";
+  try {
+    if (state.cardImageMode === "article") {
+      filled = await distributeCardArticleImages({ progress });
+      for (let i = 0; i < state.cards.length; i += 1) {
+        if (state.cardImages[i]) continue;
+        const result = await generateCardImage(i);
+        if (result.ok) filled += 1;
+        else lastReason = result.reason;
+        if (progress) setProgress(progress, (i + 1) / Math.max(state.cards.length, 1));
+      }
+    } else {
+      for (let i = 0; i < state.cards.length; i += 1) {
+        const result = await generateCardImage(i);
+        if (result.ok) filled += 1;
+        else lastReason = result.reason;
+        if (progress) setProgress(progress, (i + 1) / Math.max(state.cards.length, 1));
+      }
+    }
+    if (progress) setProgress(progress, 1, false);
+    renderCardPreview();
+    updateCardImageStatus();
+    if (!filled) toast(lastReason || "카드 이미지를 만들지 못했습니다.", "err");
+    else toast(`카드 ${filled}장에 이미지를 넣었습니다.`, "ok");
+  } finally {
+    state.busy = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = "🖼️ 카드 이미지 채우기";
+    }
+  }
+}
+
+async function assignCardArticleImage(url) {
+  const index = state.activeCard;
+  if (!url) {
+    state.cardImages[index] = null;
+    state.cardImageMeta[index] = {};
+    renderCardPreview();
+    renderCardImageControls();
+    updateCardImageStatus();
+    return;
+  }
+  const image = await proxyArticleImage(url);
+  if (!image) {
+    toast("이미지를 불러오지 못했습니다. 다른 이미지를 골라 주세요.", "err");
+    return;
+  }
+  state.cardImages[index] = image;
+  state.cardImageMeta[index] = { mode: "article", url };
+  renderCardPreview();
+  renderCardImageControls();
+  updateCardImageStatus();
+  toast(`${index + 1}장에 기사 이미지를 넣었습니다.`, "ok");
+}
+
+function updateCardImageStatus() {
+  const node = $("cardImageStatus");
+  if (!node) return;
+  const total = state.cards.length;
+  const article = state.cardImageMeta.filter((meta) => meta && meta.mode === "article").length;
+  const ai = state.cardImageMeta.filter((meta) => meta && meta.mode === "ai").length;
+  const missing = Math.max(0, total - article - ai);
+  node.textContent = total ? `기사 이미지 ${article} · AI ${ai} · 비어 있음 ${missing}` : "이미지 없음";
+}
+
+function renderCardImageControls() {
+  const select = $("cardImageSource");
+  const promptField = $("cardImagePrompt");
+  const card = state.cards[state.activeCard];
+  if (!select || !card) return;
+  const meta = state.cardImageMeta[state.activeCard] || {};
+  const urls = state.articleImages || [];
+  select.textContent = "";
+  const items = [{ value: "", label: "이미지 없음 (Canvas 아트)" }, { value: "ai", label: "✨ AI 이미지 새로 생성" }];
+  urls.forEach((url, index) => items.push({ value: "img:" + url, label: `🖼️ 기사 이미지 ${index + 1}` }));
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = item.value;
+    option.textContent = item.label;
+    select.appendChild(option);
+  }
+  select.value = meta.mode === "article" && meta.url ? "img:" + meta.url : meta.mode === "ai" ? "ai" : "";
+  if (promptField && document.activeElement !== promptField) {
+    promptField.value = card.imagePrompt || "";
+  }
+}
+
+/** 기사 본문 기반 영문 프롬프트(서버 Workers AI)를 받아온다. */
+async function preparePrompts() {
+  if (!state.article) return;
+  const token = ++state.promptToken;
+  const payload = {
+    article: {
+      title: state.article.title,
+      subtitle: state.article.subtitle,
+      body: String(state.article.body || "").slice(0, 4000),
+    },
+    cuts: state.cuts.map((cut) => ({ index: cut.index, narration: cut.narration, roleLabel: cut.roleLabel })),
+    cards: state.cards.map((card) => ({
+      no: card.no,
+      kind: card.kind,
+      kindLabel: card.kindLabel,
+      title: card.title,
+      lines: card.lines,
+    })),
+    style: state.style,
+  };
+  let data = null;
+  try {
+    const result = await api("/api/build-prompts", { method: "POST", body: JSON.stringify(payload) });
+    data = result.data || null;
+  } catch (e) {
+    data = null;
+  }
+  if (!data || !data.ok || token !== state.promptToken) {
+    setPromptBadge("기본 장면 프롬프트");
+    return;
+  }
+  if (Array.isArray(data.cutPrompts)) {
+    state.cuts.forEach((cut, index) => {
+      if (cut.promptEdited) return;
+      if (data.cutPrompts[index]) cut.aiPrompt = data.cutPrompts[index];
+    });
+  }
+  if (Array.isArray(data.cardPrompts)) {
+    state.cards.forEach((card, index) => {
+      if (card.promptEdited) return;
+      if (data.cardPrompts[index]) card.imagePrompt = data.cardPrompts[index];
+      if (state.baseCards[index]) state.baseCards[index].imagePrompt = card.imagePrompt;
+    });
+  }
+  state.promptSource = data.provider || "";
+  setPromptBadge(data.provider === "workers-ai" ? "본문 기반 프롬프트 · Workers AI" : "기본 장면 프롬프트");
+  renderCuts();
+  renderCardImageControls();
+}
+
+function setPromptBadge(text) {
+  for (const id of ["promptBadge", "cardPromptBadge"]) {
+    const node = $(id);
+    if (!node) continue;
+    node.textContent = text;
+    node.className = "pill " + (text.includes("Workers") ? "" : "local");
+  }
+}
+
 
 function updateCutImageState(index, isAi, label = "") {
   const node = document.querySelector(`[data-cut="${index}"] [data-role="imgstate"]`);
@@ -1597,9 +1850,16 @@ function updateCutImageState(index, isAi, label = "") {
 
 async function proxyArticleImage(url) {
   if (!url) return null;
+  if (state.proxyCache[url]) return state.proxyCache[url];
   try {
     const result = await api("/api/proxy-image?url=" + encodeURIComponent(url));
-    if (result.data && result.data.ok && result.data.dataUrl) return await loadImage(result.data.dataUrl);
+    if (result.data && result.data.ok && result.data.dataUrl) {
+      const image = await loadImage(result.data.dataUrl);
+      if (image) {
+        state.proxyCache[url] = image;
+        return image;
+      }
+    }
   } catch (e) {
     /* 프록시 실패는 무시하고 다음 후보로 */
   }
@@ -1740,21 +2000,20 @@ function renderCardEditor() {
   $("cardSize").textContent = `${info.width}×${info.height}`;
   const zip = $("downloadZip");
   if (zip) zip.textContent = `${state.cardCount}장 ZIP 저장`;
+  renderCardImageControls();
+  updateCardImageStatus();
 }
 
 function cardVisuals() {
   const visuals = [];
-  if (state.articleImageEl) visuals.push(state.articleImageEl);
-  for (const cut of state.cuts) {
-    const image = state.images[cut.index];
-    if (image) visuals.push(image);
-  }
+  for (const card of state.cards) visuals.push(null);
+  for (let i = 0; i < state.cards.length; i += 1) visuals[i] = state.cardImages[i] || null;
   return visuals;
 }
 
 function visualFor(index, visuals) {
   if (!visuals.length) return null;
-  return visuals[index % visuals.length];
+  return visuals[index] || null;
 }
 
 function renderCardPreview() {
@@ -1765,9 +2024,7 @@ function renderCardPreview() {
   const info = ratioInfo(state.ratio);
   canvas.width = info.width;
   canvas.height = info.height;
-  const visuals = cardVisuals();
-  let visual = visualFor(state.activeCard, visuals);
-  if (!$("useArticleImage").checked) visual = null;
+  const visual = state.cardImages[state.activeCard] || null;
   const rendered = renderCardCanvas(card, state.cardTheme, state.ratio, visual, {
     total: state.cards.length,
     layout: state.cardLayout,
@@ -1787,6 +2044,8 @@ function rebuildCards() {
   state.cards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
   state.channels = storyboard.channels;
   state.activeCard = Math.max(0, Math.min(state.activeCard, state.cards.length - 1));
+  state.cardImages = state.cards.map(() => null);
+  state.cardImageMeta = state.cards.map(() => ({}));
   renderChips();
   renderSlideList();
   renderCardEditor();
@@ -1795,6 +2054,8 @@ function rebuildCards() {
   renderChannelPackages();
   const zip = $("downloadZip");
   if (zip) zip.textContent = `${state.cardCount}장 ZIP 저장`;
+  distributeCardArticleImages({}).catch(() => {});
+  preparePrompts().catch(() => {});
 }
 
 function updateCardFromInputs() {
@@ -1832,7 +2093,6 @@ function resetCard() {
   refreshChannelsFromCards();
   toast("자동 문구로 되돌렸습니다.", "ok");
 }
-
 async function downloadCard() {
   const canvas = $("cardCanvas");
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -1848,11 +2108,9 @@ async function downloadCardsZip() {
   button.textContent = "묶는 중…";
   try {
     const files = [];
-    const visuals = cardVisuals();
     for (let i = 0; i < state.cards.length; i += 1) {
       const card = state.cards[i];
-      let visual = visualFor(i, visuals);
-      if (!$("useArticleImage").checked) visual = null;
+      const visual = state.cardImages[i] || null;
       const canvas = renderCardCanvas(card, state.cardTheme, state.ratio, visual, {
         total: state.cards.length,
         layout: state.cardLayout,
@@ -2079,14 +2337,13 @@ async function makeVideo() {
   button.textContent = "영상 만드는 중…";
   setProgress(progress, 0);
   try {
-    const useImage = $("useArticleImage").checked;
-    const visuals = useImage ? cardVisuals() : [];
+    const visuals = cardVisuals();
     const blob = await recordSlideshow({
       cards: state.cards,
       theme: state.cardTheme,
       visuals,
       layout: state.cardLayout,
-      imageEl: useImage ? state.articleImageEl : null,
+      imageEl: state.cardImages[0] || null,
       secondsPerSlide: 2.2,
       onProgress: (value) => setProgress(progress, value),
     });
@@ -2438,6 +2695,7 @@ function loadSettings() {
   state.partnerCode = prefs.partnerCode || "";
   state.style = prefs.style || "photo";
   state.imageMode = prefs.imageMode === "ai" ? "ai" : "article";
+  state.cardImageMode = prefs.cardImageMode === "ai" ? "ai" : "article";
   state.layout = prefs.layout || "grid";
   state.cardTheme = prefs.cardTheme || "magazine";
   state.cardCount = CARD_COUNTS.includes(Number(prefs.cardCount)) ? Number(prefs.cardCount) : 8;
@@ -2467,6 +2725,7 @@ function savePrefs() {
     partnerCode: state.partnerCode,
     style: state.style,
     imageMode: state.imageMode,
+    cardImageMode: state.cardImageMode,
     layout: state.layout,
     cardTheme: state.cardTheme,
     cardCount: state.cardCount,
@@ -2583,10 +2842,18 @@ function bindEvents() {
     state.images = {};
     state.imageMeta = {};
     for (const cut of state.cuts) cut.aiPrompt = cutPrompt(cut, style, state.article);
+    for (const cut of state.cuts) delete cut.promptEdited;
+    state.cards.forEach((card, index) => {
+      card.imagePrompt = cardImagePrompt(card, style, state.article, index, state.cards.length);
+      delete card.promptEdited;
+      if (state.baseCards[index]) state.baseCards[index].imagePrompt = card.imagePrompt;
+    });
     savePrefs();
     renderChips();
     renderCuts();
     renderComic();
+    renderCardImageControls();
+    preparePrompts().catch(() => {});
     toast(`${styleTheme(style).name} 스타일로 바꿨습니다. AI 이미지는 새로 생성해 주세요.`, "ok");
   });
 
@@ -2603,6 +2870,70 @@ function bindEvents() {
     const found = IMAGE_MODES.find((item) => item.id === mode);
     toast(found ? found.hint : "이미지 소스를 바꿨습니다.", "ok");
   });
+
+  const cardImageModeRow = $("cardImageModeRow");
+  if (cardImageModeRow) {
+    cardImageModeRow.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-card-image-mode]");
+      if (!button) return;
+      const mode = button.dataset.cardImageMode;
+      if (mode === state.cardImageMode) return;
+      state.cardImageMode = mode;
+      savePrefs();
+      renderChips();
+      if (mode === "article") distributeCardArticleImages({}).catch(() => {});
+      const found = IMAGE_MODES.find((item) => item.id === mode);
+      toast(found ? found.hint : "카드 이미지 소스를 바꿨습니다.", "ok");
+    });
+  }
+  if ($("cardImagesFill")) $("cardImagesFill").addEventListener("click", fillCardImages);
+  if ($("cardImageClear"))
+    $("cardImageClear").addEventListener("click", () => {
+      resetCardImages(false);
+      toast("카드 이미지를 지웠습니다. Canvas 아트로 그립니다.", "ok");
+    });
+  if ($("cardImageSource")) {
+    $("cardImageSource").addEventListener("change", async (event) => {
+      const value = event.target.value;
+      if (value === "ai") {
+        const result = await generateCardImage(state.activeCard);
+        toast(result.ok ? "이 카드 이미지를 받았습니다." : result.reason, result.ok ? "ok" : "");
+        return;
+      }
+      if (value.startsWith("img:")) await assignCardArticleImage(value.slice(4));
+      else await assignCardArticleImage("");
+    });
+  }
+  if ($("cardImagePrompt")) {
+    $("cardImagePrompt").addEventListener("input", (event) => {
+      const card = state.cards[state.activeCard];
+      if (!card) return;
+      card.imagePrompt = event.target.value;
+      card.promptEdited = true;
+    });
+  }
+  if ($("cardImageApply")) {
+    $("cardImageApply").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      const original = button.textContent;
+      button.textContent = "생성 중…";
+      const result = await generateCardImage(state.activeCard);
+      button.disabled = false;
+      button.textContent = original;
+      toast(result.ok ? "이 카드 이미지를 받았습니다." : result.reason, result.ok ? "ok" : "");
+    });
+  }
+  if ($("cardImageReset")) {
+    $("cardImageReset").addEventListener("click", () => {
+      const card = state.cards[state.activeCard];
+      if (!card) return;
+      card.imagePrompt = cardImagePrompt(card, state.style, state.article, state.activeCard, state.cards.length);
+      delete card.promptEdited;
+      renderCardImageControls();
+      toast("이 카드의 프롬프트를 기사 본문 기준으로 새로 만들었습니다.", "ok");
+    });
+  }
 
   $("layoutRow").addEventListener("click", (event) => {
     const button = event.target.closest("[data-layout]");
@@ -2729,7 +3060,6 @@ function bindEvents() {
   $("resetCard").addEventListener("click", resetCard);
   $("downloadCard").addEventListener("click", downloadCard);
   $("downloadZip").addEventListener("click", downloadCardsZip);
-  $("useArticleImage").addEventListener("change", renderCardPreview);
 
   $("platformRow").addEventListener("click", (event) => {
     const button = event.target.closest("[data-platform]");
@@ -2955,6 +3285,12 @@ async function init() {
     logoutUser,
     assignArticleImage,
     assignImagesInOrder,
+    generateCardImage,
+    fillCardImages,
+    distributeCardArticleImages,
+    assignCardArticleImage,
+    preparePrompts,
+    renderCardImageControls,
     renderAccounts,
     cardsScales: CARD_SCALES,
     cardScales: CARD_SCALES,
