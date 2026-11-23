@@ -210,7 +210,7 @@ function drawUnderline(ctx, x, y, width, theme) {
  * 카드 종류별 본문
  * ------------------------------------------------------------------ */
 
-function drawCover(ctx, w, h, pad, theme, card, imageEl) {
+function drawCover(ctx, w, h, pad, theme, card, imageEl, opts = {}) {
   if (imageEl && imageEl.naturalWidth) {
     const scale = Math.max(w / imageEl.naturalWidth, h / imageEl.naturalHeight);
     const dw = imageEl.naturalWidth * scale;
@@ -274,7 +274,7 @@ function drawCover(ctx, w, h, pad, theme, card, imageEl) {
   const topY = imageEl ? pad + 16 : pad + 18;
   ctx.font = font(27, 800);
   ctx.fillStyle = theme.accent;
-  ctx.fillText("CARD NEWS · 8", pad, topY);
+  ctx.fillText("CARD NEWS · " + String(opts.total || 8), pad, topY);
   ctx.textAlign = "right";
   ctx.fillStyle = theme.muted;
   ctx.font = font(25, 600);
@@ -508,7 +508,7 @@ function drawChecklist(ctx, w, h, pad, theme, card) {
   });
 }
 
-function drawCta(ctx, w, h, pad, theme, card) {
+function drawCta(ctx, w, h, pad, theme, card, opts = {}) {
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
@@ -558,17 +558,317 @@ function drawCta(ctx, w, h, pad, theme, card) {
   ctx.font = font(27, 700);
   ctx.fillText("프로필 링크도 같은 기사로 연결됩니다", w / 2, y);
 
-  // 하단 미니 카드 8장 표시
+  // 하단 미니 카드 장수 표시
   const stripY = h - pad * 2.55;
   const cardW = 44;
   const gap = 14;
-  const totalW = 8 * cardW + 7 * gap;
-  for (let i = 0; i < 8; i += 1) {
+  const total = opts.total || 8;
+  const totalW = total * cardW + (total - 1) * gap;
+  for (let i = 0; i < total; i += 1) {
     ctx.fillStyle = i === 0 ? theme.accent : theme.line;
     roundRect(ctx, w / 2 - totalW / 2 + i * (cardW + gap), stripY, cardW, 62, 8);
     ctx.fill();
   }
 
+  ctx.restore();
+}
+
+function paintPanel(ctx, x, y, w, h, theme) {
+  const second = theme.accent2 || theme.accent;
+  const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+  grad.addColorStop(0, theme.accent);
+  grad.addColorStop(0.62, second);
+  grad.addColorStop(1, "#0b0f16");
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y, w, h);
+  const glow = ctx.createRadialGradient(x + w * 0.18, y + h * 0.16, 0, x + w * 0.18, y + h * 0.16, Math.max(w, h) * 0.8);
+  glow.addColorStop(0, "rgba(255,255,255,0.22)");
+  glow.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "rgba(6,10,16,0.18)";
+  ctx.fillRect(x, y, w, h);
+  // 컬러풀한 대각선 리본
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = "#ffffff";
+  for (let i = 0; i < 4; i += 1) {
+    const rx = x - h * 0.2 + i * w * 0.34;
+    ctx.beginPath();
+    ctx.moveTo(rx, y + h);
+    ctx.lineTo(rx + w * 0.16, y);
+    ctx.lineTo(rx + w * 0.24, y);
+    ctx.lineTo(rx + w * 0.08, y + h);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function paintSideArt(ctx, x, y, w, h, theme, card, opts = {}) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+  grad.addColorStop(0, theme.accent);
+  grad.addColorStop(0.55, theme.accent2 || theme.accent);
+  grad.addColorStop(1, theme.bg);
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y, w, h);
+
+  // 큰 반투명 숫자/글리프
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = font(Math.round(Math.min(w, h) * 0.92), 900);
+  ctx.fillText(String(card.no || 1).padStart(2, "0"), x + w / 2, y + h / 2);
+  ctx.restore();
+
+  // 동심원
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,0.28)";
+  for (let i = 1; i <= 4; i += 1) {
+    ctx.lineWidth = 2 + i;
+    ctx.beginPath();
+    ctx.arc(x + w * 0.82, y + h * 0.2, Math.min(w, h) * 0.09 * i, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 하프톤 점
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.3)";
+  const gap = Math.max(14, Math.round(Math.min(w, h) / 26));
+  for (let py = y + h * 0.62; py < y + h - gap; py += gap) {
+    for (let px = x + gap; px < x + w - gap; px += gap) {
+      if ((Math.round(px / gap) + Math.round(py / gap)) % 3 === 0) {
+        ctx.beginPath();
+        ctx.arc(px, py, Math.max(1.2, gap * 0.1), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+
+  // 아래 캡션 스트립
+  const stripH = Math.max(64, Math.round(h * 0.12));
+  ctx.fillStyle = "rgba(6,10,16,0.62)";
+  ctx.fillRect(x, y + h - stripH, w, stripH);
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const label = fitText(ctx, (card.kicker || "뉴스픽") + " · " + (opts.site || "뉴스픽"), {
+    maxWidth: w - stripH * 0.9,
+    maxLines: 1,
+    size: Math.round(stripH * 0.32),
+    minSize: 16,
+    weight: 800,
+  });
+  ctx.font = font(label.size, 800);
+  ctx.fillText(label.lines[0] || "뉴스픽", x + stripH * 0.42, y + h - stripH / 2);
+  ctx.restore();
+}
+
+function splitOrientation(index) {
+  const pattern = ["left", "top", "right", "bottom"];
+  return pattern[Math.abs(Number(index) || 0) % pattern.length];
+}
+
+export function splitOrientationFor(index) {
+  return splitOrientation(index);
+}
+
+function drawSplitCard(ctx, w, h, card, theme, imageEl, opts = {}) {
+  const orientation = opts.orientation || splitOrientation(opts.index || 0);
+  const horizontal = orientation === "left" || orientation === "right";
+  const vis = horizontal
+    ? { x: orientation === "left" ? 0 : w / 2, y: 0, w: w / 2, h }
+    : { x: 0, y: orientation === "top" ? 0 : h / 2, w, h: h / 2 };
+  const text = horizontal
+    ? { x: orientation === "left" ? w / 2 : 0, y: 0, w: w / 2, h }
+    : { x: 0, y: orientation === "top" ? h / 2 : 0, w, h: h / 2 };
+
+  // 배경
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, w, h);
+
+  // 비주얼 면
+  if (imageEl && imageEl.naturalWidth) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(vis.x, vis.y, vis.w, vis.h);
+    ctx.clip();
+    const scale = Math.max(vis.w / imageEl.naturalWidth, vis.h / imageEl.naturalHeight);
+    const dw = imageEl.naturalWidth * scale;
+    const dh = imageEl.naturalHeight * scale;
+    ctx.drawImage(imageEl, vis.x + (vis.w - dw) / 2, vis.y + (vis.h - dh) / 2, dw, dh);
+    const shade = ctx.createLinearGradient(vis.x, vis.y, vis.x, vis.y + vis.h);
+    shade.addColorStop(0, "rgba(6,10,16,0.06)");
+    shade.addColorStop(1, "rgba(6,10,16,0.55)");
+    ctx.fillStyle = shade;
+    ctx.fillRect(vis.x, vis.y, vis.w, vis.h);
+    ctx.restore();
+  } else {
+    paintSideArt(ctx, vis.x, vis.y, vis.w, vis.h, theme, card, opts);
+  }
+
+  // 텍스트 면
+  paintPanel(ctx, text.x, text.y, text.w, text.h, theme);
+  const pad = Math.round(Math.min(w, h) * 0.055);
+  const innerX = text.x + pad;
+  const innerW = text.w - pad * 2;
+  let cursor = text.y + pad;
+
+  ctx.save();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  // 상단: 장수 · 머리말
+  ctx.font = font(Math.round(Math.min(w, h) * 0.026), 800);
+  ctx.fillStyle = "rgba(255,255,255,0.78)";
+  ctx.fillText(`CARD ${String(card.no || 1).padStart(2, "0")} / ${String(opts.total || 8).padStart(2, "0")}`, innerX, cursor);
+  ctx.textAlign = "right";
+  ctx.fillText("NEWSPIC STUDIO", innerX + innerW, cursor);
+  ctx.textAlign = "left";
+  cursor += Math.round(Math.min(w, h) * 0.055);
+
+  // 머리말 칩
+  const kicker = String(card.kicker || "뉴스픽");
+  ctx.font = font(Math.round(Math.min(w, h) * 0.03), 800);
+  const chipW = Math.min(innerW, ctx.measureText(kicker).width + pad * 0.9);
+  ctx.fillStyle = "rgba(255,255,255,0.2)";
+  roundRect(ctx, innerX, cursor, chipW, Math.round(Math.min(w, h) * 0.062), 999);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(kicker, innerX + pad * 0.45, cursor + Math.round(Math.min(w, h) * 0.014));
+  cursor += Math.round(Math.min(w, h) * 0.1);
+
+  // 제목
+  const titleSize = Math.round(Math.min(text.w, text.h) * 0.11);
+  const title = fitText(ctx, card.title || "", {
+    maxWidth: innerW,
+    maxLines: 3,
+    size: titleSize,
+    minSize: Math.round(titleSize * 0.56),
+    weight: 900,
+    ratio: 1.2,
+  });
+  ctx.fillStyle = "#ffffff";
+  ctx.font = font(title.size, 900);
+  title.lines.forEach((line, i) => ctx.fillText(line, innerX, cursor + i * title.lineHeight));
+  cursor += title.lines.length * title.lineHeight + pad * 0.32;
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.fillRect(innerX, cursor, Math.round(innerW * 0.16), Math.round(Math.min(w, h) * 0.012));
+  cursor += Math.round(Math.min(w, h) * 0.05);
+
+  // 본문
+  const items = (card.lines || []).slice(0, 3);
+  const numbers = card.numbers || [];
+  const rowGap = Math.round(Math.min(w, h) * 0.018);
+  const rowsBottom = text.y + text.h - pad * 2.5;
+  const single = items.length === 1 && !(card.kind === "numbers" && numbers.length > 1);
+  const rowH = single
+    ? Math.max(Math.round(Math.min(w, h) * 0.09), rowsBottom - cursor)
+    : Math.min(
+        Math.round(Math.min(w, h) * 0.15),
+        Math.max(Math.round(Math.min(w, h) * 0.075), (rowsBottom - cursor - rowGap * (items.length - 1)) / Math.max(items.length, 1))
+      );
+  items.forEach((line, index) => {
+    const top = cursor + index * (rowH + rowGap);
+    if (index > 0) {
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(innerX, top - rowGap / 2);
+      ctx.lineTo(innerX + innerW, top - rowGap / 2);
+      ctx.stroke();
+    }
+    if (card.kind === "numbers" && numbers[index]) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = font(Math.round(rowH * 0.5), 900);
+      ctx.fillText(String(numbers[index].highlight || "").slice(0, 12), innerX, top);
+      const body = fitText(ctx, numbers[index].text || "", {
+        maxWidth: innerW,
+        maxLines: 2,
+        size: Math.round(rowH * 0.28),
+        minSize: 16,
+        weight: 600,
+        ratio: 1.3,
+      });
+      ctx.fillStyle = "rgba(255,255,255,0.82)";
+      ctx.font = font(body.size, 600);
+      body.lines.forEach((textLine, i) => ctx.fillText(textLine, innerX, top + rowH * 0.55 + i * body.lineHeight));
+    } else {
+      const textValue = String(line).replace(/^[·✔]\s*/, "");
+      const marker = card.kind === "summary" ? String(index + 1) : card.kind === "checklist" ? "✓" : "—";
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      if (card.kind === "summary") {
+        ctx.beginPath();
+        ctx.arc(innerX + rowH * 0.18, top + rowH * 0.24, rowH * 0.17, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = theme.accent;
+        ctx.font = font(Math.round(rowH * 0.24), 900);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(marker, innerX + rowH * 0.18, top + rowH * 0.25);
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+      } else {
+        ctx.font = font(Math.round(rowH * 0.3), 900);
+        ctx.fillText(marker, innerX, top + rowH * 0.02);
+      }
+      const body = fitText(ctx, textValue, {
+        maxWidth: innerW - rowH * 0.5,
+        maxLines: 2,
+        size: Math.round(Math.min(w, h) * 0.033),
+        minSize: 17,
+        weight: card.kind === "cover" ? 600 : 700,
+        ratio: 1.3,
+      });
+      ctx.fillStyle = "rgba(255,255,255,0.94)";
+      ctx.font = font(body.size, card.kind === "cover" ? 600 : 700);
+      const bodyTop = single ? top + Math.max(0, (rowH - body.lines.length * body.lineHeight) / 2) : top;
+      body.lines.forEach((textLine, i) => ctx.fillText(textLine, innerX + rowH * 0.5, bodyTop + i * body.lineHeight));
+    }
+  });
+
+  // 키워드 배지
+  const badges = (card.badges && card.badges.length ? card.badges : []).filter(Boolean).slice(0, 3);
+  if (badges.length) {
+    let bx = innerX;
+    const by = text.y + text.h - pad * 2.1;
+    ctx.font = font(Math.round(Math.min(w, h) * 0.024), 800);
+    for (const badge of badges) {
+      const label = String(badge).replace(/^#/, "#");
+      const bw = Math.min(innerW, ctx.measureText(label).width + pad * 0.8);
+      if (bx + bw > innerX + innerW) break;
+      ctx.fillStyle = "rgba(255,255,255,0.18)";
+      roundRect(ctx, bx, by, bw, Math.round(Math.min(w, h) * 0.05), 999);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      ctx.fillText(label, bx + pad * 0.4, by + Math.round(Math.min(w, h) * 0.011));
+      bx += bw + pad * 0.24;
+    }
+  }
+
+  // 사이트 · 페이지 점
+  ctx.textAlign = "left";
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.font = font(Math.round(Math.min(w, h) * 0.026), 600);
+  ctx.fillText(String(card.footer || "뉴스픽 스튜디오").slice(0, 30), innerX, text.y + text.h - pad * 0.7);
+  const total = opts.total || 8;
+  const dotR = Math.max(3, Math.round(w * 0.0045));
+  const gap = dotR * 4;
+  const startX = innerX + innerW - (total - 1) * gap;
+  for (let i = 0; i < total; i += 1) {
+    ctx.beginPath();
+    ctx.arc(startX + i * gap, text.y + text.h - pad * 0.62, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = i === (card.no || 1) - 1 ? "#ffffff" : "rgba(255,255,255,0.32)";
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -584,6 +884,12 @@ export function drawCard(ctx, w, h, card, themeId, imageEl, opts = {}) {
   ctx.textBaseline = "top";
   ctx.textAlign = "left";
 
+  if ((opts.layout || "split") === "split") {
+    drawSplitCard(ctx, w, h, card, theme, imageEl, opts);
+    ctx.restore();
+    return;
+  }
+
   if (card.kind === "cover") {
     // 표지는 배경을 직접 칠한다
     if (imageEl && imageEl.naturalWidth) {
@@ -592,7 +898,7 @@ export function drawCard(ctx, w, h, card, themeId, imageEl, opts = {}) {
     } else {
       paintPattern(ctx, w, h, theme);
     }
-    drawCover(ctx, w, h, pad, theme, card, imageEl);
+    drawCover(ctx, w, h, pad, theme, card, imageEl, opts);
     drawFooter(ctx, w, h, pad, theme, card, opts.total || 8);
     ctx.restore();
     return;
@@ -604,7 +910,7 @@ export function drawCard(ctx, w, h, card, themeId, imageEl, opts = {}) {
   if (card.kind === "summary") drawSummary(ctx, w, h, pad, theme, card);
   else if (card.kind === "numbers") drawNumbers(ctx, w, h, pad, theme, card);
   else if (card.kind === "checklist") drawChecklist(ctx, w, h, pad, theme, card);
-  else if (card.kind === "cta") drawCta(ctx, w, h, pad, theme, card);
+  else if (card.kind === "cta") drawCta(ctx, w, h, pad, theme, card, opts);
   else drawLines(ctx, w, h, pad, theme, card);
 
   drawFooter(ctx, w, h, pad, theme, card, opts.total || 8);

@@ -99,20 +99,32 @@ function extractElement(html, openRe) {
   return source.slice(start);
 }
 
-/** 기사 본문 HTML 후보를 뽑는다 (뉴스픽 bo_v_atc 우선). */
+/** 기사 본문 HTML 후보를 뽑는다. 후보 중 실제 텍스트가 가장 많은 블록을 쓴다.
+ *  (연합뉴스처럼 <article class="story-summary"> 가 본문보다 먼저 나오는 페이지 대응)
+ */
 export function extractBodyHtml(html) {
   const candidates = [
     /<div[^>]*\bid\s*=\s*["']bo_v_atc["'][^>]*>/i,
     /<[a-zA-Z]+[^>]*\bitemprop\s*=\s*["']articleBody["'][^>]*>/i,
+    /<[a-zA-Z]+[^>]*\bid\s*=\s*["']articleWrap["'][^>]*>/i,
+    /<div[^>]*\bclass\s*=\s*["'][^"']*\bstory-news\b[^"']*["'][^>]*>/i,
     /<article\b[^>]*>/i,
     /<div[^>]*\bclass\s*=\s*["'][^"']*\barticle[-_]?(?:body|view|content|cont)\b[^"']*["'][^>]*>/i,
   ];
+  let best = "";
+  let bestLength = 0;
   for (const re of candidates) {
     const block = extractElement(html, re);
-    if (block && stripHtml(block).length > 80) return block;
+    if (!block) continue;
+    const length = stripHtml(block).length;
+    if (length > bestLength) {
+      best = block;
+      bestLength = length;
+    }
   }
+  if (best && bestLength > 80) return best;
   const bodyMatch = /<body\b[^>]*>([\s\S]*)<\/body>/i.exec(String(html || ""));
-  return bodyMatch ? bodyMatch[1] : "";
+  return bodyMatch ? bodyMatch[1] : best || "";
 }
 
 export function stripHtml(html) {
@@ -126,13 +138,36 @@ export function stripHtml(html) {
   return normalizeSpace(decodeEntities(s));
 }
 
-/** 본문 블록을 문단 배열로 바꾼다. */
+/** 본문 블록을 문단 배열로 바꾼다.
+ *  - 속성 없는 <p> 문단이 3개 이상이면 그것을 본문으로 본다(연합뉴스 등).
+ *  - <br> 로 나뉜 본문은 텍스트를 줄 단위로 나눈다(뉴스픽 등).
+ */
 export function htmlToParagraphs(html) {
-  const text = stripHtml(html);
-  return text
-    .split(/\n+/)
-    .map((line) => normalizeSpace(line))
-    .filter((line) => line.length > 0);
+  const source = String(html || "");
+  const bare = [];
+  const re = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+  let m;
+  while ((m = re.exec(source))) {
+    const attrs = m[1] || "";
+    if (/class\s*=\s*["'][^"']*\S/i.test(attrs)) continue;
+    const text = normalizeSpace(stripHtml(m[2]));
+    if (text) bare.push(text);
+  }
+  const lines = bare.length >= 3 ? bare : stripHtml(html).split(/\n+/).map((line) => normalizeSpace(line));
+  const out = [];
+  for (const line of lines) {
+    const text = stripDateline(normalizeSpace(line));
+    if (!text) continue;
+    if (text.length < 8) continue;
+    if (isNoiseLine(text)) continue;
+    if (/^[\w.+-]+@[\w.-]+$/.test(text)) continue;
+    if (/^(?:저작권자|Copyright|ⓒ|무단 전재|재배포 금지)/i.test(text)) continue;
+    if (/송고\s*\d{4}\/\d{2}\/\d{2}/.test(text) && text.length < 80) continue;
+    if (out[out.length - 1] === text) continue;
+    out.push(text.slice(0, 1600));
+    if (out.length >= 80) break;
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ *
@@ -150,6 +185,8 @@ const NOISE_ALWAYS = [
 const NOISE_SHORT = [
   /무단\s*전재/, /재배포\s*금지/, /copyright/i, /ⓒ/, /all\s+rights\s+reserved/i,
   /카카오톡\s*채널/, /네이버\s*(?:뉴스|홈)/,
+  /^\[[^\]]{0,24}(?:캡처|사진|자료|제공|영상)[^\]]{0,24}\]$/, /^▲\s?/, /^▶\s?/,
+  /^(?:구독|로그인|기사\s*제보|저작권자)/,
 ];
 
 const BYLINE_PATTERN = /^[가-힣]{2,4}\s*(?:기자|특파원|앵커|논설위원)\s*$/;

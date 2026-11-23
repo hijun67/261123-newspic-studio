@@ -1,9 +1,9 @@
 {
   "name": "newspic-studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "뉴스픽 파트너스 기사 텍스트 미러링 + AI 4컷 + 카드뉴스 8장 + 6개 채널 업로드 패키지 (Cloudflare Pages)",
+  "description": "뉴스픽 스튜디오 — 분류 피드 + 텍스트 미러링 + AI 4컷(2모드) + 카드뉴스 4·6·8·10장(분할 레이아웃) + 채널 다중 선택 + 분 단위 자동 생성 (Cloudflare Pages)",
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node /workspace/.local-tests/newspic-studio/test.js",

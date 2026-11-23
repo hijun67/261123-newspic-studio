@@ -36,6 +36,8 @@ export async function recordSlideshow({
   cards,
   theme = "magazine",
   imageEl = null,
+  visuals = [],
+  layout = "split",
   secondsPerSlide = 2.2,
   onProgress = () => {},
   fps = 30,
@@ -51,12 +53,13 @@ export async function recordSlideshow({
   const ctx = target.getContext("2d");
 
   // 카드별로 미리 렌더 (전환 중 다시 그리지 않도록)
-  const frames = cards.map((card) => {
+  const frames = cards.map((card, index) => {
     const off = document.createElement("canvas");
     off.width = info.width;
     off.height = info.height;
     const octx = off.getContext("2d");
-    drawCard(octx, info.width, info.height, card, theme, card.kind === "cover" ? imageEl : null, { total: cards.length });
+    const visual = visuals.length ? visuals[index % visuals.length] : card.kind === "cover" ? imageEl : null;
+    drawCard(octx, info.width, info.height, card, theme, visual, { total: cards.length, layout, index });
     return off;
   });
 

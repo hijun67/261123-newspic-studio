@@ -2,8 +2,12 @@
  * 1) 미러링 허브 → 2) 4컷 → 3) 카드뉴스 8장 → 4) 6개 채널
  */
 import {
+  CARD_COUNTS,
+  CARD_KIND_LABELS,
+  IMAGE_MODES,
   PLATFORMS,
   STYLES,
+  buildCards,
   buildChannels,
   buildHashtags,
   buildStoryboard,
@@ -30,7 +34,9 @@ const KIND_LABEL = {
   background: "배경",
   numbers: "숫자",
   facts: "핵심 팩트",
+  detail: "디테일",
   issue: "쟁점",
+  comparison: "비교",
   checklist: "체크리스트",
   cta: "CTA",
 };
@@ -43,8 +49,11 @@ const state = {
   channels: {},
   activePlatform: "threads",
   style: "photo",
+  imageMode: "ai",
   layout: "grid",
   cardTheme: "magazine",
+  cardCount: 8,
+  cardLayout: "split",
   ratio: "4:5",
   activeCard: 0,
   images: {},
@@ -55,6 +64,19 @@ const state = {
   archive: [],
   byok: { provider: "free", openai: "", gemini: "", model: "" },
   slideshowUrl: "",
+  selectedChannels: ["threads", "instagram", "facebook", "x", "tiktok"],
+  feed: { category: "all", items: [], loading: false, fallback: false, loaded: false, error: "" },
+  auto: {
+    enabled: false,
+    minutes: 5,
+    preset: 5,
+    outputs: { cards: true, cuts: true },
+    nextAt: 0,
+    timer: null,
+    running: false,
+    queue: [],
+    used: new Set(),
+  },
   busy: false,
 };
 
@@ -335,6 +357,214 @@ async function deleteArchivedArticle(id) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 분류별 기사 피드
+ * ------------------------------------------------------------------ */
+
+const FEED_CATEGORY_LABELS = {
+  all: "전체",
+  economy: "경제",
+  tech: "IT/테크",
+  society: "사회",
+  entertain: "연예/이슈",
+  sports: "스포츠",
+};
+
+function renderFeedCategories() {
+  const row = $("feedCategoryRow");
+  if (!row) return;
+  row.textContent = "";
+  for (const [id, label] of Object.entries(FEED_CATEGORY_LABELS)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip" + (state.feed.category === id ? " active" : "");
+    button.dataset.feedCategory = id;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", state.feed.category === id ? "true" : "false");
+    button.textContent = label;
+    row.appendChild(button);
+  }
+}
+
+function feedDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function renderFeedList() {
+  const list = $("feedList");
+  if (!list) return;
+  list.textContent = "";
+  const items = state.feed.items || [];
+  $("feedHint").hidden = Boolean(items.length);
+  if (!items.length) {
+    $("feedHint").hidden = false;
+    $("feedHint").textContent = state.feed.loading
+      ? "분류별 기사를 불러오고 있습니다…"
+      : "피드를 불러오지 못했습니다. 위 주소 입력으로 직접 미러링하거나 잠시 뒤 다시 시도해 주세요.";
+    return;
+  }
+
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "feed-item";
+    li.dataset.feedId = item.id;
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+    li.setAttribute("aria-label", item.title + " 미러링");
+
+    if (item.image) {
+      const thumb = document.createElement("img");
+      thumb.className = "feed-thumb";
+      thumb.src = item.image;
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      thumb.referrerPolicy = "no-referrer";
+      thumb.addEventListener("error", () => thumb.remove());
+      li.appendChild(thumb);
+    } else {
+      const art = document.createElement("span");
+      art.className = "feed-thumb art";
+      art.textContent = item.isFallback ? "📋" : "📰";
+      art.setAttribute("aria-hidden", "true");
+      li.appendChild(art);
+    }
+
+    const body = document.createElement("div");
+    body.className = "feed-body";
+    const title = document.createElement("h4");
+    title.textContent = item.title;
+    body.appendChild(title);
+    const summary = document.createElement("p");
+    summary.textContent = item.summary || "";
+    body.appendChild(summary);
+
+    const meta = document.createElement("div");
+    meta.className = "feed-meta";
+    const site = document.createElement("span");
+    site.textContent = item.site || "뉴스";
+    meta.appendChild(site);
+    const date = feedDate(item.publishedAt);
+    if (date) {
+      const dot = document.createElement("span");
+      dot.textContent = "·";
+      const time = document.createElement("span");
+      time.textContent = date;
+      meta.append(dot, time);
+    }
+    if (item.isFallback) {
+      const badge = document.createElement("span");
+      badge.className = "feed-badge curated";
+      badge.textContent = "큐레이션";
+      meta.appendChild(badge);
+    } else if (item.partnerApplied) {
+      const badge = document.createElement("span");
+      badge.className = "feed-badge partner";
+      badge.textContent = "pn 적용";
+      meta.appendChild(badge);
+    }
+    body.appendChild(meta);
+
+    const action = document.createElement("span");
+    action.className = "feed-go";
+    action.textContent = "미러링 →";
+    body.appendChild(action);
+
+    li.appendChild(body);
+    list.appendChild(li);
+  }
+}
+
+async function loadFeed(category = state.feed.category) {
+  state.feed.category = category in FEED_CATEGORY_LABELS ? category : "all";
+  state.feed.loading = true;
+  renderFeedCategories();
+  renderFeedList();
+  const status = $("feedStatus");
+  if (status) status.textContent = "불러오는 중…";
+  try {
+    const query =
+      "/api/feed?category=" +
+      encodeURIComponent(state.feed.category) +
+      "&limit=12&pn=" +
+      encodeURIComponent(state.partnerCode || "");
+    const result = await api(query);
+    const data = result.data || {};
+    if (data.ok && Array.isArray(data.items)) {
+      state.feed.items = data.items;
+      state.feed.fallback = Boolean(data.fallback);
+      state.feed.error = "";
+      state.feed.loaded = true;
+      if (status) {
+        status.textContent = data.fallback
+          ? `큐레이션 ${data.items.length}건`
+          : `실시간 ${data.items.length}건 · 5분 캐시`;
+      }
+    } else {
+      throw new Error("bad feed");
+    }
+  } catch (e) {
+    state.feed.items = [];
+    state.feed.fallback = true;
+    state.feed.error = "피드를 불러오지 못했습니다.";
+    state.feed.loaded = false;
+    if (status) status.textContent = "불러오기 실패";
+  } finally {
+    state.feed.loading = false;
+    renderFeedList();
+    renderFeedCategories();
+  }
+}
+
+async function openFeedItem(item, node) {
+  if (!item || state.busy) return;
+  state.busy = true;
+  document.body.classList.add("is-busy");
+  if (node) node.classList.add("busy");
+  try {
+    let data = null;
+    if (item.url) {
+      const result = await api("/api/mirror", {
+        method: "POST",
+        body: JSON.stringify({ url: item.url, pn: state.partnerCode }),
+      });
+      data = result.data;
+      if (data && data.ok && data.article) state.feed.items = state.feed.items.map((x) => (x.id === item.id ? { ...x } : x));
+    }
+    if (!data || !data.ok || !data.article) {
+      const bodyText = item.body || item.summary || item.title;
+      const manual = await api("/api/mirror", {
+        method: "POST",
+        body: JSON.stringify({
+          manual: true,
+          title: item.title,
+          body: bodyText,
+          url: item.url || "",
+          pn: state.partnerCode,
+        }),
+      });
+      data = manual.data;
+      if (data && data.ok) data.warnings = ["피드 요약으로 저장했습니다. 원문에서 세부 내용을 확인하세요."];
+    }
+    if (data && data.ok && data.article) {
+      if (data.storage !== "kv") saveLocalArticle(data.article);
+      await setArticle(data.article);
+      showTab("cards");
+      toast("미러링·요약 완료 — 카드뉴스 제작 단계로 넘어왔습니다.", "ok");
+    } else {
+      toast((data && data.message) || "기사를 열지 못했습니다.", "err");
+    }
+  } catch (e) {
+    toast("네트워크 오류로 기사를 열지 못했습니다.", "err");
+  } finally {
+    state.busy = false;
+    document.body.classList.remove("is-busy");
+    if (node) node.classList.remove("busy");
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 기사 → 스튜디오
  * ------------------------------------------------------------------ */
 
@@ -346,7 +576,7 @@ function partnerUrlNow(article = state.article) {
 async function setArticle(article, { fromArchive = false } = {}) {
   state.article = article;
   state.article.partnerUrl = partnerUrlNow(article);
-  const storyboard = buildStoryboard(state.article, { partnerUrl: state.article.partnerUrl });
+  const storyboard = buildStoryboard(state.article, { partnerUrl: state.article.partnerUrl, cardCount: state.cardCount });
   state.cuts = storyboard.cuts;
   state.baseCards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
   state.cards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
@@ -387,7 +617,9 @@ function renderWorkspace() {
   renderCardEditor();
   renderCardPreview();
   renderPlatformTabs();
+  renderChannelSelection();
   renderChannel();
+  renderChannelPackages();
   document.body.dataset.articleId = state.article.id;
 }
 
@@ -600,6 +832,49 @@ function renderChips() {
     button.dataset.layout = item.id;
     button.textContent = item.label;
     layoutRow.appendChild(button);
+  }
+
+  const imageModeRow = $("imageModeRow");
+  if (imageModeRow) {
+    imageModeRow.textContent = "";
+    for (const mode of IMAGE_MODES) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip" + (state.imageMode === mode.id ? " active" : "");
+      button.dataset.imageMode = mode.id;
+      button.title = mode.hint;
+      button.textContent = `${mode.emoji} ${mode.name}`;
+      imageModeRow.appendChild(button);
+    }
+  }
+
+  const chapterRow = $("chapterRow");
+  if (chapterRow) {
+    chapterRow.textContent = "";
+    for (const count of CARD_COUNTS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip" + (state.cardCount === count ? " active" : "");
+      button.dataset.chapter = String(count);
+      button.textContent = `${count}장`;
+      chapterRow.appendChild(button);
+    }
+  }
+
+  const cardLayoutRow = $("cardLayoutRow");
+  if (cardLayoutRow) {
+    cardLayoutRow.textContent = "";
+    for (const item of [
+      { id: "split", label: "◧ 분할(기본)" },
+      { id: "full", label: "▣ 전면형" },
+    ]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chip" + (state.cardLayout === item.id ? " active" : "");
+      button.dataset.cardLayout = item.id;
+      button.textContent = item.label;
+      cardLayoutRow.appendChild(button);
+    }
   }
 
   const themeRow = $("themeRow");
@@ -827,11 +1102,57 @@ async function generateCutImage(cut) {
   return { ok: false, reason: (result.data && result.data.reason) || "이미지를 만들지 못했습니다." };
 }
 
-function updateCutImageState(index, isAi) {
-  const node = document.querySelector(`[data-cut="${index + 1}"] [data-role="imgstate"]`);
+function updateCutImageState(index, isAi, label = "") {
+  const node = document.querySelector(`[data-cut="${index}"] [data-role="imgstate"]`);
   if (!node) return;
   node.className = "imgstate " + (isAi ? "ai" : "fallback");
-  node.textContent = isAi ? "AI 이미지" : "Canvas 아트";
+  node.textContent = label || (isAi ? "AI 이미지" : "Canvas 아트");
+}
+
+async function proxyArticleImage(url) {
+  if (!url) return null;
+  try {
+    const result = await api("/api/proxy-image?url=" + encodeURIComponent(url));
+    if (result.data && result.data.ok && result.data.dataUrl) return await loadImage(result.data.dataUrl);
+  } catch (e) {
+    /* 프록시 실패는 무시하고 다음 후보로 */
+  }
+  return null;
+}
+
+async function applyArticleImages({ aiFill = false, progress = null } = {}) {
+  const article = state.article;
+  if (!article) return { filled: 0, total: 0 };
+  const urls = [];
+  const push = (url) => {
+    if (url && /^https?:/i.test(url) && !urls.includes(url)) urls.push(url);
+  };
+  push(article.image);
+  for (const url of article.images || []) push(url);
+
+  let filled = 0;
+  for (let i = 0; i < state.cuts.length; i += 1) {
+    const cut = state.cuts[i];
+    const url = urls[i];
+    if (!url) break;
+    const image = await proxyArticleImage(url);
+    if (!image) continue;
+    state.images[cut.index] = image;
+    state.imageMeta[cut.index] = { mode: "article", url };
+    filled += 1;
+    updateCutImageState(cut.index, true, "기사 이미지");
+    if (progress) setProgress(progress, filled / Math.max(state.cuts.length, 1));
+  }
+
+  if (aiFill) {
+    for (const cut of state.cuts) {
+      if (state.images[cut.index]) continue;
+      const result = await generateCutImage(cut);
+      if (result.ok) filled += 1;
+    }
+  }
+  renderComic();
+  return { filled, total: urls.length };
 }
 
 async function generateAllImages() {
@@ -843,6 +1164,25 @@ async function generateAllImages() {
   const progress = $("cutsProgress");
   let success = 0;
   let lastReason = "";
+
+  if (state.imageMode === "article") {
+    const applied = await applyArticleImages({ aiFill: false, progress });
+    success = applied.filled;
+    for (const cut of state.cuts) {
+      if (state.images[cut.index]) continue;
+      const result = await generateCutImage(cut);
+      if (result.ok) success += 1;
+      else lastReason = result.reason;
+    }
+    setProgress(progress, 1, false);
+    button.disabled = false;
+    button.textContent = "🖼️ 기사 이미지로 4컷 구성";
+    state.busy = false;
+    if (success === 0) toast("기사 이미지를 불러오지 못해 Canvas 아트로 그렸습니다. " + (lastReason || ""), "");
+    else toast(`기사 이미지 ${applied.filled}컷 + 보충 ${success - applied.filled}컷으로 4컷을 구성했습니다.`, "ok");
+    return;
+  }
+
   for (let i = 0; i < state.cuts.length; i += 1) {
     setProgress(progress, i / state.cuts.length);
     const result = await generateCutImage(state.cuts[i]);
@@ -911,6 +1251,23 @@ function renderCardEditor() {
   $("cardFooter").value = card.footer || "";
   const info = ratioInfo(state.ratio);
   $("cardSize").textContent = `${info.width}×${info.height}`;
+  const zip = $("downloadZip");
+  if (zip) zip.textContent = `${state.cardCount}장 ZIP 저장`;
+}
+
+function cardVisuals() {
+  const visuals = [];
+  if (state.articleImageEl) visuals.push(state.articleImageEl);
+  for (const cut of state.cuts) {
+    const image = state.images[cut.index];
+    if (image) visuals.push(image);
+  }
+  return visuals;
+}
+
+function visualFor(index, visuals) {
+  if (!visuals.length) return null;
+  return visuals[index % visuals.length];
 }
 
 function renderCardPreview() {
@@ -921,13 +1278,36 @@ function renderCardPreview() {
   const info = ratioInfo(state.ratio);
   canvas.width = info.width;
   canvas.height = info.height;
-  const useImage = $("useArticleImage").checked && state.articleImageEl && card.kind === "cover";
-  const rendered = renderCardCanvas(card, state.cardTheme, state.ratio, useImage ? state.articleImageEl : null, {
+  const visuals = cardVisuals();
+  let visual = visualFor(state.activeCard, visuals);
+  if (!$("useArticleImage").checked) visual = null;
+  const rendered = renderCardCanvas(card, state.cardTheme, state.ratio, visual, {
     total: state.cards.length,
+    layout: state.cardLayout,
+    index: state.activeCard,
+    site: state.article.site,
   });
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(rendered, 0, 0);
+}
+
+function rebuildCards() {
+  if (!state.article) return;
+  const partnerUrl = partnerUrlNow();
+  const storyboard = buildStoryboard(state.article, { partnerUrl, cardCount: state.cardCount });
+  state.baseCards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
+  state.cards = storyboard.cards.map((card) => ({ ...card, lines: [...card.lines] }));
+  state.channels = storyboard.channels;
+  state.activeCard = Math.max(0, Math.min(state.activeCard, state.cards.length - 1));
+  renderChips();
+  renderSlideList();
+  renderCardEditor();
+  renderCardPreview();
+  renderChannel();
+  renderChannelPackages();
+  const zip = $("downloadZip");
+  if (zip) zip.textContent = `${state.cardCount}장 ZIP 저장`;
 }
 
 function updateCardFromInputs() {
@@ -981,18 +1361,26 @@ async function downloadCardsZip() {
   button.textContent = "묶는 중…";
   try {
     const files = [];
+    const visuals = cardVisuals();
     for (let i = 0; i < state.cards.length; i += 1) {
       const card = state.cards[i];
-      const useImage = $("useArticleImage").checked && state.articleImageEl && card.kind === "cover";
-      const canvas = renderCardCanvas(card, state.cardTheme, state.ratio, useImage ? state.articleImageEl : null, {
+      let visual = visualFor(i, visuals);
+      if (!$("useArticleImage").checked) visual = null;
+      const canvas = renderCardCanvas(card, state.cardTheme, state.ratio, visual, {
         total: state.cards.length,
+        layout: state.cardLayout,
+        index: i,
+        site: state.article.site,
       });
       const data = await canvasToBytes(canvas);
       files.push({ name: `card-${String(i + 1).padStart(2, "0")}-${card.kind}.png`, data });
     }
     const zip = buildZip(files);
-    downloadBlob(new Blob([zip], { type: "application/zip" }), `newspic-cards8-${state.ratio.replace(":", "x")}-${todayStamp()}.zip`);
-    toast("카드뉴스 8장을 ZIP으로 저장했습니다.", "ok");
+    downloadBlob(
+      new Blob([zip], { type: "application/zip" }),
+      `newspic-cards${state.cardCount}-${state.cardLayout}-${state.ratio.replace(":", "x")}-${todayStamp()}.zip`
+    );
+    toast(`카드뉴스 ${state.cardCount}장을 ZIP으로 저장했습니다.`, "ok");
   } catch (e) {
     toast("ZIP을 만들지 못했습니다. 카드를 하나씩 저장해 주세요.", "err");
   } finally {
@@ -1054,10 +1442,116 @@ function updateChannelChars() {
   $("channelChars").style.color = length > limit ? "#fca5a5" : length > limit * 0.92 ? "#fcd34d" : "";
 }
 
+function renderChannelSelection() {
+  const row = $("channelSelectRow");
+  if (!row) return;
+  row.textContent = "";
+  for (const platform of PLATFORMS) {
+    const label = document.createElement("label");
+    label.className = "channel-check";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.dataset.channel = platform.id;
+    input.checked = state.selectedChannels.includes(platform.id);
+    const span = document.createElement("span");
+    span.textContent = `${platform.emoji} ${platform.name}`;
+    label.append(input, span);
+    row.appendChild(label);
+  }
+  const count = state.selectedChannels.length;
+  const node = $("channelSelectedCount");
+  if (node) node.textContent = `${count}개 선택 / ${PLATFORMS.length}개`;
+}
+
+function selectedPlatforms() {
+  return PLATFORMS.filter((platform) => state.selectedChannels.includes(platform.id));
+}
+
+function renderChannelPackages() {
+  const wrap = $("channelPackages");
+  if (!wrap) return;
+  wrap.textContent = "";
+  const selected = selectedPlatforms();
+  if (!state.article) return;
+  if (!selected.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "채널을 하나 이상 선택하면 채널별 본문·해시태그·첫 댓글 패키지가 여기에 표시됩니다.";
+    wrap.appendChild(empty);
+    return;
+  }
+
+  for (const platform of selected) {
+    const pack = state.channels[platform.id];
+    if (!pack) continue;
+    const card = document.createElement("article");
+    card.className = "channel-package";
+    card.dataset.package = platform.id;
+
+    const head = document.createElement("div");
+    head.className = "package-head";
+    const name = document.createElement("strong");
+    name.textContent = `${platform.emoji} ${platform.name}`;
+    const chars = document.createElement("span");
+    chars.className = "tiny";
+    chars.textContent = `${(pack.body || "").length} / ${pack.limit}자`;
+    head.append(name, chars);
+    card.appendChild(head);
+
+    const body = document.createElement("p");
+    body.className = "package-body";
+    body.textContent = pack.body || "";
+    card.appendChild(body);
+
+    const tags = document.createElement("p");
+    tags.className = "package-tags";
+    tags.textContent = (pack.hashtags || []).join(" ");
+    card.appendChild(tags);
+
+    const row = document.createElement("div");
+    row.className = "row wrap package-actions";
+    const add = (label, action, primary = false) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn" + (primary ? " primary" : "") + " package-btn";
+      button.dataset.packageAction = action;
+      button.textContent = label;
+      row.appendChild(button);
+    };
+    add("본문 복사", "copy-body");
+    add("첫 댓글 링크", "copy-comment");
+    add("해시태그", "copy-tags");
+    if (pack.intentUrl || pack.shareUrl) add("작성창 열기 ↗", "open", true);
+    add("카드 ZIP", "zip");
+    if (pack.id === "tiktok" || pack.id === "youtube") add("영상 만들기", "video");
+    card.appendChild(row);
+    wrap.appendChild(card);
+  }
+}
+
+async function handlePackageAction(action, platformId) {
+  const pack = state.channels[platformId];
+  if (!pack) return;
+  if (action === "copy-body") return copyText(pack.body || "", "본문을 복사했습니다.");
+  if (action === "copy-comment") return copyText(pack.firstComment || "", "첫 댓글 링크를 복사했습니다.");
+  if (action === "copy-tags") return copyText((pack.hashtags || []).join(" "), "해시태그를 복사했습니다.");
+  if (action === "open") {
+    if (pack.id === "instagram" || pack.id === "facebook") {
+      if (pack.shareUrl) window.open(pack.shareUrl, "_blank", "noopener");
+      else toast("인스타·페이스북은 앱에서 이미지를 올린 뒤 본문을 붙여넣어 주세요.");
+      return;
+    }
+    if (pack.intentUrl) window.open(pack.intentUrl + encodeURIComponent(pack.body || ""), "_blank", "noopener");
+    return;
+  }
+  if (action === "zip") return downloadCardsZip();
+  if (action === "video") return makeVideo();
+}
+
 async function makeVideo() {
   if (!videoSupported()) {
     toast("이 브라우저는 영상 녹화를 지원하지 않습니다. Chrome·Safari 최신 버전에서 시도해 주세요.", "err");
-    return;
+    return null;
   }
   const button = $("makeVideo");
   const progress = $("videoProgress");
@@ -1065,10 +1559,13 @@ async function makeVideo() {
   button.textContent = "영상 만드는 중…";
   setProgress(progress, 0);
   try {
-    const useImage = $("useArticleImage").checked && state.articleImageEl;
+    const useImage = $("useArticleImage").checked;
+    const visuals = useImage ? cardVisuals() : [];
     const blob = await recordSlideshow({
       cards: state.cards,
       theme: state.cardTheme,
+      visuals,
+      layout: state.cardLayout,
       imageEl: useImage ? state.articleImageEl : null,
       secondsPerSlide: 2.2,
       onProgress: (value) => setProgress(progress, value),
@@ -1077,13 +1574,15 @@ async function makeVideo() {
     state.slideshowUrl = URL.createObjectURL(blob);
     const link = $("videoDownload");
     link.href = state.slideshowUrl;
-    link.download = `newspic-cards8-9x16-${todayStamp()}.webm`;
+    link.download = `newspic-cards${state.cardCount}-9x16-${todayStamp()}.webm`;
     link.hidden = false;
     setProgress(progress, 1, false);
     toast("9:16 슬라이드 영상(.webm)을 만들었습니다.", "ok");
+    return blob;
   } catch (error) {
     setProgress(progress, 1, false);
     toast((error && error.message) || "영상을 만들지 못했습니다.", "err");
+    return null;
   } finally {
     button.disabled = false;
     button.textContent = "🎬 슬라이드 영상 만들기";
@@ -1091,8 +1590,326 @@ async function makeVideo() {
 }
 
 /* ------------------------------------------------------------------ *
- * 설정(BYOK)
+ * 자동 생성 (분 단위 간격)
  * ------------------------------------------------------------------ */
+
+const AUTO_PRESETS = [1, 5, 10, 30, 60];
+
+function renderAutoIntervals() {
+  const row = $("autoIntervalRow");
+  if (!row) return;
+  row.textContent = "";
+  for (const minutes of AUTO_PRESETS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip" + (state.auto.minutes === minutes ? " active" : "");
+    button.dataset.autoMinutes = String(minutes);
+    button.textContent = minutes + "분";
+    row.appendChild(button);
+  }
+  const custom = document.createElement("span");
+  custom.className = "chip static";
+  custom.textContent = state.auto.minutes + "분 간격";
+  row.appendChild(custom);
+  const input = $("autoMinutes");
+  if (input && document.activeElement !== input) input.value = String(state.auto.minutes);
+}
+
+function renderAutoOutputs() {
+  const row = $("autoOutputRow");
+  if (!row) return;
+  row.textContent = "";
+  const items = [
+    { id: "cards", label: "카드뉴스", on: state.auto.outputs.cards && !state.auto.outputs.cuts },
+    { id: "cuts", label: "4컷 만화", on: !state.auto.outputs.cards && state.auto.outputs.cuts },
+    { id: "both", label: "둘 다", on: state.auto.outputs.cards && state.auto.outputs.cuts },
+  ];
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chip" + (item.on ? " active" : "");
+    button.dataset.autoOutput = item.id;
+    button.textContent = item.label;
+    row.appendChild(button);
+  }
+}
+
+function updateAutoCountdown() {
+  const node = $("autoCountdown");
+  if (!node) return;
+  if (!state.auto.enabled) {
+    node.textContent = "수동 생성 모드입니다.";
+    return;
+  }
+  if (state.auto.running) {
+    node.textContent = "자동 생성 실행 중…";
+    return;
+  }
+  const remain = Math.max(0, state.auto.nextAt - Date.now());
+  const minutes = Math.floor(remain / 60000);
+  const seconds = Math.floor((remain % 60000) / 1000);
+  node.textContent = `다음 자동 생성까지 ${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")} · ${state.auto.minutes}분 간격`;
+}
+
+function scheduleAuto() {
+  if (state.auto.timer) {
+    clearInterval(state.auto.timer);
+    state.auto.timer = null;
+  }
+  if (!state.auto.enabled) {
+    state.auto.nextAt = 0;
+    updateAutoCountdown();
+    return;
+  }
+  state.auto.nextAt = Date.now() + state.auto.minutes * 60000;
+  state.auto.timer = setInterval(() => {
+    updateAutoCountdown();
+    if (Date.now() >= state.auto.nextAt && !state.auto.running) {
+      state.auto.nextAt = Date.now() + state.auto.minutes * 60000;
+      runAutoOnce("timer");
+    }
+  }, 1000);
+  updateAutoCountdown();
+}
+
+function renderAuto() {
+  const toggle = $("autoToggle");
+  if (!toggle) return;
+  toggle.checked = state.auto.enabled;
+  const statePill = $("autoState");
+  statePill.textContent = state.auto.enabled ? "자동 생성 ON" : "수동 생성";
+  statePill.className = "pill" + (state.auto.enabled ? "" : " local");
+  $("autoSettings").hidden = !state.auto.enabled;
+  renderAutoIntervals();
+  renderAutoOutputs();
+  updateAutoCountdown();
+  renderAutoQueue();
+}
+
+function setAutoEnabled(enabled, { silent = false } = {}) {
+  state.auto.enabled = Boolean(enabled);
+  savePrefs();
+  scheduleAuto();
+  renderAuto();
+  if (!silent) {
+    toast(
+      state.auto.enabled
+        ? `자동 생성 ON — ${state.auto.minutes}분마다 새 기사로 산출물을 만듭니다.`
+        : "자동 생성을 멈추고 수동 생성으로 돌아갔습니다.",
+      "ok"
+    );
+  }
+}
+
+function thumbFromCanvas(canvas, width = 360) {
+  const scale = width / canvas.width;
+  const out = document.createElement("canvas");
+  out.width = width;
+  out.height = Math.max(1, Math.round(canvas.height * scale));
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#0b0f16";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(canvas, 0, 0, out.width, out.height);
+  return out.toDataURL("image/jpeg", 0.72);
+}
+
+async function runAutoOnce(source = "manual") {
+  if (state.auto.running) {
+    toast("자동 생성이 이미 실행 중입니다.");
+    return null;
+  }
+  if (state.busy) {
+    toast("다른 작업이 끝난 뒤에 다시 실행해 주세요.", "err");
+    return null;
+  }
+  state.auto.running = true;
+  state.busy = true;
+  const button = $("autoRunOnce");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "생성 중…";
+  updateAutoCountdown();
+  try {
+    if (!state.feed.items.length) await loadFeed(state.feed.category);
+    let item = state.feed.items.find((entry) => !state.auto.used.has(entry.id));
+    if (!item) {
+      await loadFeed(state.feed.category);
+      item = state.feed.items.find((entry) => !state.auto.used.has(entry.id));
+    }
+    if (!item) throw new Error("새 기사가 없습니다. 피드가 갱신될 때까지 기다리거나 분류를 바꿔 보세요.");
+
+    let article = null;
+    if (item.url) {
+      const result = await api("/api/mirror", {
+        method: "POST",
+        body: JSON.stringify({ url: item.url, pn: state.partnerCode }),
+      });
+      if (result.data && result.data.ok && result.data.article) article = result.data.article;
+    }
+    if (!article) {
+      const bodyText = item.body || item.summary || item.title;
+      const manual = await api("/api/mirror", {
+        method: "POST",
+        body: JSON.stringify({ manual: true, title: item.title, body: bodyText, url: item.url || "", pn: state.partnerCode }),
+      });
+      if (manual.data && manual.data.ok) article = manual.data.article;
+    }
+    if (!article) throw new Error("기사를 미러링하지 못했습니다.");
+    state.auto.used.add(item.id);
+    article.partnerUrl = partnerUrlNow(article);
+    if (state.storage !== "kv") saveLocalArticle(article);
+
+    const storyboard = buildStoryboard(article, { partnerUrl: article.partnerUrl, cardCount: state.cardCount });
+    const visualUrl = article.image || (article.images || [])[0] || "";
+    const visual = visualUrl ? await proxyArticleImage(visualUrl) : null;
+    const entry = {
+      id: "auto" + Date.now(),
+      at: new Date().toISOString(),
+      source,
+      title: article.title,
+      site: article.site || item.site || "뉴스픽",
+      article,
+      cuts: storyboard.cuts,
+      cards: storyboard.cards,
+      count: storyboard.cards.length,
+      visualUrl,
+      outputs: { ...state.auto.outputs },
+      thumb: "",
+      cutThumb: "",
+    };
+
+    if (state.auto.outputs.cards) {
+      const first = renderCardCanvas(storyboard.cards[0], state.cardTheme, state.ratio, visual, {
+        total: storyboard.cards.length,
+        layout: state.cardLayout,
+        index: 0,
+        site: article.site,
+      });
+      entry.thumb = thumbFromCanvas(first, 320);
+    }
+    if (state.auto.outputs.cuts) {
+      const sheet = document.createElement("canvas");
+      const images = visual ? { 1: visual, 2: visual } : {};
+      renderSheet(sheet, { cuts: storyboard.cuts, images, style: state.style, layout: "grid", article });
+      entry.cutThumb = thumbFromCanvas(sheet, 320);
+      if (!entry.thumb) entry.thumb = entry.cutThumb;
+    }
+
+    state.auto.queue.unshift(entry);
+    if (state.auto.queue.length > 12) state.auto.queue.pop();
+    renderAutoQueue();
+    toast(`자동 생성 1건 완료 — ${entry.title}`, "ok");
+    return entry;
+  } catch (error) {
+    toast((error && error.message) || "자동 생성에 실패했습니다.", "err");
+    return null;
+  } finally {
+    state.auto.running = false;
+    state.busy = false;
+    button.disabled = false;
+    button.textContent = original;
+    updateAutoCountdown();
+  }
+}
+
+function renderAutoQueue() {
+  const list = $("autoQueue");
+  if (!list) return;
+  list.textContent = "";
+  const queue = state.auto.queue || [];
+  $("autoQueueCount").textContent = `${queue.length}건`;
+  $("autoQueueEmpty").hidden = queue.length > 0;
+  for (const entry of queue) {
+    const li = document.createElement("li");
+    li.className = "auto-item";
+    li.dataset.autoId = entry.id;
+
+    const thumb = document.createElement("img");
+    thumb.className = "auto-thumb";
+    thumb.src = entry.thumb || entry.cutThumb;
+    thumb.alt = "";
+    li.appendChild(thumb);
+
+    const body = document.createElement("div");
+    body.className = "auto-body";
+    const title = document.createElement("strong");
+    title.textContent = entry.title;
+    body.appendChild(title);
+    const meta = document.createElement("span");
+    meta.className = "tiny";
+    const time = feedDate(entry.at);
+    const parts = [];
+    if (entry.outputs.cards) parts.push(`카드 ${entry.count}장`);
+    if (entry.outputs.cuts) parts.push("4컷 합본");
+    meta.textContent = [time, entry.site, parts.join(" · ")].filter(Boolean).join(" · ");
+    body.appendChild(meta);
+
+    const row = document.createElement("div");
+    row.className = "row wrap auto-actions";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "btn ghost package-btn";
+    open.dataset.autoOpen = entry.id;
+    open.textContent = "열기";
+    row.appendChild(open);
+    if (entry.outputs.cards) {
+      const cards = document.createElement("button");
+      cards.type = "button";
+      cards.className = "btn package-btn";
+      cards.dataset.autoDownload = "cards";
+      cards.dataset.autoId = entry.id;
+      cards.textContent = "카드 ZIP";
+      row.appendChild(cards);
+    }
+    if (entry.outputs.cuts) {
+      const cuts = document.createElement("button");
+      cuts.type = "button";
+      cuts.className = "btn package-btn";
+      cuts.dataset.autoDownload = "cuts";
+      cuts.dataset.autoId = entry.id;
+      cuts.textContent = "4컷 PNG";
+      row.appendChild(cuts);
+    }
+    body.appendChild(row);
+    li.appendChild(body);
+    list.appendChild(li);
+  }
+}
+
+async function downloadAutoItem(entry, type) {
+  if (!entry) return;
+  const article = entry.article;
+  const partnerUrl = article.partnerUrl || partnerUrlNow(article);
+  const visual = entry.visualUrl ? await proxyArticleImage(entry.visualUrl) : null;
+  if (type === "cards") {
+    const files = [];
+    for (let i = 0; i < entry.cards.length; i += 1) {
+      const card = entry.cards[i];
+      const canvas = renderCardCanvas(card, state.cardTheme, state.ratio, visual, {
+        total: entry.cards.length,
+        layout: state.cardLayout,
+        index: i,
+        site: article.site,
+      });
+      files.push({ name: `card-${String(i + 1).padStart(2, "0")}-${card.kind}.png`, data: await canvasToBytes(canvas) });
+    }
+    downloadBlob(
+      new Blob([buildZip(files)], { type: "application/zip" }),
+      `newspic-auto-cards${entry.cards.length}-${todayStamp()}.zip`
+    );
+    toast("자동 생성 카드뉴스를 ZIP으로 저장했습니다.", "ok");
+    return;
+  }
+  const sheet = document.createElement("canvas");
+  const images = visual ? { 1: visual, 2: visual } : {};
+  renderSheet(sheet, { cuts: entry.cuts, images, style: state.style, layout: "grid", article });
+  const blob = await new Promise((resolve) => sheet.toBlob(resolve, "image/png"));
+  if (!blob) return;
+  downloadBlob(blob, `newspic-auto-4cut-${todayStamp()}.png`);
+  toast("자동 생성 4컷 합본을 저장했습니다.", "ok");
+}
+
+
 
 function loadSettings() {
   const byok = readJson(LS.byok, state.byok);
@@ -1100,23 +1917,45 @@ function loadSettings() {
   const prefs = readJson(LS.prefs, {});
   state.partnerCode = prefs.partnerCode || "";
   state.style = prefs.style || "photo";
+  state.imageMode = prefs.imageMode === "article" ? "article" : "ai";
   state.layout = prefs.layout || "grid";
   state.cardTheme = prefs.cardTheme || "magazine";
+  state.cardCount = CARD_COUNTS.includes(Number(prefs.cardCount)) ? Number(prefs.cardCount) : 8;
+  state.cardLayout = prefs.cardLayout === "full" ? "full" : "split";
   state.ratio = prefs.ratio || "4:5";
+  const minutes = Number(prefs.autoMinutes);
+  state.auto.minutes = Number.isFinite(minutes) && minutes >= 1 && minutes <= 1440 ? Math.round(minutes) : 5;
+  if (prefs.autoOutputs && typeof prefs.autoOutputs === "object") {
+    state.auto.outputs = { cards: Boolean(prefs.autoOutputs.cards), cuts: Boolean(prefs.autoOutputs.cuts) };
+    if (!state.auto.outputs.cards && !state.auto.outputs.cuts) state.auto.outputs = { cards: true, cuts: true };
+  }
+  if (Array.isArray(prefs.channels) && prefs.channels.length) {
+    state.selectedChannels = prefs.channels.filter((id) => PLATFORMS.some((platform) => platform.id === id));
+  }
+  state.feed.category = prefs.feedCategory && prefs.feedCategory in FEED_CATEGORY_LABELS ? prefs.feedCategory : "all";
   $("partnerCode").value = state.partnerCode;
   $("imageProvider").value = state.byok.provider || "free";
   $("openaiKey").value = state.byok.openai || "";
   $("geminiKey").value = state.byok.gemini || "";
   $("imageModel").value = state.byok.model || "";
+  const autoMinutes = $("autoMinutes");
+  if (autoMinutes) autoMinutes.value = String(state.auto.minutes);
 }
 
 function savePrefs() {
   writeJson(LS.prefs, {
     partnerCode: state.partnerCode,
     style: state.style,
+    imageMode: state.imageMode,
     layout: state.layout,
     cardTheme: state.cardTheme,
+    cardCount: state.cardCount,
+    cardLayout: state.cardLayout,
     ratio: state.ratio,
+    autoMinutes: state.auto.minutes,
+    autoOutputs: state.auto.outputs,
+    channels: state.selectedChannels,
+    feedCategory: state.feed.category,
   });
 }
 
@@ -1138,6 +1977,8 @@ function applyPartnerCode() {
   refreshChannelsFromCards();
   const dialogue = $("readerPartner");
   if (dialogue) dialogue.href = state.article.partnerUrl || state.article.url || "#";
+  clearTimeout(applyPartnerCode.timer);
+  applyPartnerCode.timer = setTimeout(() => loadFeed(state.feed.category), 350);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1184,6 +2025,29 @@ function bindEvents() {
     openArchivedArticle(item.dataset.id);
   });
 
+  $("feedCategoryRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-feed-category]");
+    if (!button) return;
+    if (state.feed.category === button.dataset.feedCategory) return;
+    state.feed.category = button.dataset.feedCategory;
+    savePrefs();
+    loadFeed(state.feed.category);
+  });
+  $("feedList").addEventListener("click", (event) => {
+    const node = event.target.closest("[data-feed-id]");
+    if (!node) return;
+    const item = state.feed.items.find((entry) => entry.id === node.dataset.feedId);
+    if (item) openFeedItem(item, node);
+  });
+  $("feedList").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const node = event.target.closest("[data-feed-id]");
+    if (!node) return;
+    event.preventDefault();
+    const item = state.feed.items.find((entry) => entry.id === node.dataset.feedId);
+    if (item) openFeedItem(item, node);
+  });
+
   $("partnerCode").addEventListener("change", applyPartnerCode);
   $("partnerCode").addEventListener("blur", applyPartnerCode);
 
@@ -1204,6 +2068,20 @@ function bindEvents() {
     renderCuts();
     renderComic();
     toast(`${styleTheme(style).name} 스타일로 바꿨습니다. AI 이미지는 새로 생성해 주세요.`, "ok");
+  });
+
+  $("imageModeRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-image-mode]");
+    if (!button) return;
+    const mode = button.dataset.imageMode;
+    if (mode === state.imageMode) return;
+    state.imageMode = mode;
+    savePrefs();
+    renderChips();
+    const gen = $("generateAll");
+    if (gen) gen.textContent = mode === "article" ? "🖼️ 기사 이미지로 4컷 구성" : "✨ AI 이미지 4컷 생성";
+    const found = IMAGE_MODES.find((item) => item.id === mode);
+    toast(found ? found.hint : "이미지 소스를 바꿨습니다.", "ok");
   });
 
   $("layoutRow").addEventListener("click", (event) => {
@@ -1263,6 +2141,28 @@ function bindEvents() {
     savePrefs();
     renderChips();
     renderCardPreview();
+    renderChannelPackages();
+  });
+  $("chapterRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-chapter]");
+    if (!button) return;
+    const count = Number(button.dataset.chapter);
+    if (!CARD_COUNTS.includes(count) || state.cardCount === count) return;
+    state.cardCount = count;
+    savePrefs();
+    rebuildCards();
+    toast(`카드뉴스를 ${count}장 구성으로 다시 기획했습니다.`, "ok");
+  });
+  $("cardLayoutRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-card-layout]");
+    if (!button) return;
+    const layout = button.dataset.cardLayout;
+    if (layout === state.cardLayout) return;
+    state.cardLayout = layout;
+    savePrefs();
+    renderChips();
+    renderCardPreview();
+    toast(layout === "split" ? "한쪽 이미지 · 한쪽 텍스트 분할 레이아웃입니다." : "전면형 레이아웃으로 바꿨습니다.", "ok");
   });
   $("ratioRow").addEventListener("click", (event) => {
     const button = event.target.closest("[data-ratio]");
@@ -1298,6 +2198,7 @@ function bindEvents() {
     const pack = currentChannel();
     if (pack) pack.body = $("channelBody").value;
     updateChannelChars();
+    renderChannelPackages();
   });
   $("channelTitleInput").addEventListener("input", () => {
     const pack = currentChannel();
@@ -1334,6 +2235,81 @@ function bindEvents() {
     box.style.fontWeight = "900";
   });
   $("makeVideo").addEventListener("click", makeVideo);
+
+  $("channelSelectRow").addEventListener("change", (event) => {
+    const input = event.target.closest("input[data-channel]");
+    if (!input) return;
+    const id = input.dataset.channel;
+    if (input.checked) {
+      if (!state.selectedChannels.includes(id)) state.selectedChannels.push(id);
+    } else {
+      state.selectedChannels = state.selectedChannels.filter((item) => item !== id);
+    }
+    savePrefs();
+    renderChannelSelection();
+    renderChannelPackages();
+  });
+  $("channelPackages").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-package-action]");
+    if (!button) return;
+    const card = button.closest("[data-package]");
+    if (!card) return;
+    handlePackageAction(button.dataset.packageAction, card.dataset.package);
+  });
+
+  $("autoToggle").addEventListener("change", (event) => setAutoEnabled(event.target.checked));
+  $("autoIntervalRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-auto-minutes]");
+    if (!button) return;
+    state.auto.minutes = Number(button.dataset.autoMinutes) || 5;
+    savePrefs();
+    if (state.auto.enabled) scheduleAuto();
+    renderAuto();
+  });
+  $("autoMinutes").addEventListener("change", (event) => {
+    const value = Math.max(1, Math.min(1440, Math.round(Number(event.target.value) || 5)));
+    state.auto.minutes = value;
+    event.target.value = String(value);
+    savePrefs();
+    if (state.auto.enabled) scheduleAuto();
+    renderAuto();
+  });
+  $("autoOutputRow").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-auto-output]");
+    if (!button) return;
+    const value = button.dataset.autoOutput;
+    state.auto.outputs =
+      value === "cards"
+        ? { cards: true, cuts: false }
+        : value === "cuts"
+          ? { cards: false, cuts: true }
+          : { cards: true, cuts: true };
+    savePrefs();
+    renderAutoOutputs();
+  });
+  $("autoRunOnce").addEventListener("click", () => runAutoOnce("manual"));
+  $("autoQueue").addEventListener("click", (event) => {
+    const open = event.target.closest("[data-auto-open]");
+    if (open) {
+      const entry = state.auto.queue.find((item) => item.id === open.dataset.autoOpen);
+      if (!entry) return;
+      state.article = entry.article;
+      state.article.partnerUrl = partnerUrlNow(entry.article);
+      state.cuts = entry.cuts;
+      state.cards = entry.cards.map((card) => ({ ...card, lines: [...card.lines] }));
+      state.baseCards = state.cards.map((card) => ({ ...card, lines: [...card.lines] }));
+      state.activeCard = 0;
+      state.images = {};
+      renderReader();
+      renderWorkspace();
+      showTab("cards");
+      return;
+    }
+    const button = event.target.closest("[data-auto-download]");
+    if (!button) return;
+    const entry = state.auto.queue.find((item) => item.id === button.dataset.autoId);
+    if (entry) downloadAutoItem(entry, button.dataset.autoDownload);
+  });
 
   $("byokBtn").addEventListener("click", () => $("settingsDialog").showModal());
   $("saveSettings").addEventListener("click", () => {
@@ -1375,6 +2351,10 @@ async function init() {
   bindEvents();
   await loadPresets();
   setStoragePill();
+  renderAuto();
+  renderFeedCategories();
+  renderChannelSelection();
+  await loadFeed(state.feed.category);
 
   const hash = location.hash.replace("#", "");
   const startTab = ["mirror", "cuts", "cards", "channels"].includes(hash) ? hash : "mirror";
@@ -1394,10 +2374,19 @@ async function init() {
     setArticle,
     showTab,
     generateCutImage,
+    applyArticleImages,
+    generateAllImages,
     renderComic,
     renderCardPreview,
+    rebuildCards,
+    loadFeed,
+    openFeedItem,
+    runAutoOnce,
+    setAutoEnabled,
+    downloadAutoItem,
     recordSlideshow,
     buildZip,
+    buildCards,
   };
 }
 

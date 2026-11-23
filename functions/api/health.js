@@ -4,7 +4,7 @@ export async function onRequest(context) {
   const data = {
     ok: true,
     service: "newspic-studio",
-    version: "1.0.0",
+    version: "1.1.0",
     time: new Date().toISOString(),
     features: {
       mirror: true,
@@ -12,7 +12,13 @@ export async function onRequest(context) {
       freeImage: true,
       workersAi: Boolean(env.AI && typeof env.AI.run === "function"),
       byok: ["openai", "gemini"],
-      cards: 8,
+      feed: true,
+      feedCategories: ["all", "economy", "tech", "society", "entertain", "sports"],
+      cards: [4, 6, 8, 10],
+      defaultCards: 8,
+      cardLayouts: ["split", "full"],
+      imageModes: ["ai", "article"],
+      autoGenerate: true,
       channels: 6,
     },
   };

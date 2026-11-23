@@ -124,6 +124,18 @@ function cleanParagraphs(list) {
   return out;
 }
 
+function cleanArticleTitle(title, site) {
+  let text = normalizeSpace(title);
+  if (!text) return text;
+  const parts = text.split(/\s*[|｜]\s*/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length > 1) {
+    const name = normalizeSpace(site);
+    if (name && parts[parts.length - 1] === name) text = parts.slice(0, -1).join(" | ");
+    else if (parts[0] === parts[parts.length - 1]) text = parts[0];
+  }
+  return text;
+}
+
 function makeArticle(input) {
   const paragraphs = cleanParagraphs(input.paragraphs || String(input.body || "").split(/\n{1,}/));
   const body = paragraphs.join("\n\n");
@@ -261,6 +273,7 @@ async function handleUrl(payload, kv) {
   const inlineImages = extractInlineImages(bodyHtml, finalUrl);
   const site = detectSite(html, finalUrl);
   const author = extractAuthor(html);
+  const cleanTitle = cleanArticleTitle(title, site);
 
   if (!title && paragraphs.length === 0) {
     return json({
@@ -278,7 +291,7 @@ async function handleUrl(payload, kv) {
   }
 
   const article = makeArticle({
-    title,
+    title: cleanTitle,
     subtitle,
     paragraphs: paragraphs.length ? paragraphs : [subtitle].filter(Boolean),
     body: paragraphs.length ? "" : subtitle,

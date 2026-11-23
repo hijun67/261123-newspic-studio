@@ -427,7 +427,32 @@ function numberLines(article, used, count = 3) {
   return picked;
 }
 
-export function buildCards(article, partnerUrl = "", hashtags = null) {
+/* 카드 장수(4·6·8·10)별 구성. 화면의 장수 칩과 그대로 대응한다. */
+export const CARD_COUNTS = [4, 6, 8, 10];
+
+export const CARD_SEQUENCES = {
+  4: ["cover", "summary", "facts", "cta"],
+  6: ["cover", "summary", "background", "numbers", "issue", "cta"],
+  8: ["cover", "summary", "background", "numbers", "facts", "issue", "checklist", "cta"],
+  10: ["cover", "summary", "background", "numbers", "facts", "detail", "issue", "comparison", "checklist", "cta"],
+};
+
+export const CARD_KIND_LABELS = {
+  cover: "표지",
+  summary: "3줄 요약",
+  background: "배경",
+  numbers: "숫자",
+  facts: "핵심 팩트",
+  detail: "디테일",
+  issue: "쟁점",
+  comparison: "비교",
+  checklist: "체크리스트",
+  cta: "CTA",
+};
+
+export function buildCards(article, partnerUrl = "", hashtags = null, options = {}) {
+  const requested = Number(options && options.count);
+  const count = CARD_COUNTS.includes(requested) ? requested : 8;
   const pool = sentencePool(article);
   const used = new Set();
   const ranked = scoreSentences(pool).map((item) => item.sentence);
@@ -458,82 +483,110 @@ export function buildCards(article, partnerUrl = "", hashtags = null) {
   const next =
     pick(ordered, used, 1, (s) => /(신청|시행|예정|계획|발표|확인|필요|부터)/.test(s) && !isIssueSentence(s))[0] ||
     "원문 기사에서 세부 일정과 조건을 확인하세요.";
+  const detail = pick(ordered, used, 2).map((s) => shorten(s, 60));
 
-  const cards = [];
-  cards.push({
-    no: 1,
-    kind: "cover",
-    kicker: `${clean(article.site) || "뉴스픽"} · 오늘의 이슈`,
-    title: shorten(title, 42),
-    lines: [shorten(subtitle || summary[0], 62)],
-    footer: tags.slice(0, 3).join(" "),
-  });
-  cards.push({
-    no: 2,
-    kind: "summary",
-    kicker: "3줄 요약",
-    title: "한 번에 정리하면",
-    lines: summary.map((line) => "· " + line),
-    footer: "한 번에 정리",
-  });
-  cards.push({
-    no: 3,
-    kind: "background",
-    kicker: "배경",
-    title: "왜 지금 나온 이야기일까",
-    lines: background.length ? background : summary.slice(0, 2),
-    footer: "무슨 일이 있었나",
-  });
-  cards.push({
-    no: 4,
-    kind: "numbers",
-    kicker: "숫자로 보기",
-    title: numbers.length ? "이 숫자만 보면 됩니다" : "핵심 수치",
-    lines: numbers.length ? numbers.map((item) => item.text) : summary.map((line) => line),
-    numbers,
-    footer: "기사에 나온 숫자 그대로",
-  });
-  cards.push({
-    no: 5,
-    kind: "facts",
-    kicker: "핵심 팩트",
-    title: "놓치면 안 되는 사실",
-    lines: facts.length ? facts : summary,
-    footer: "핵심 팩트 3",
-  });
-  cards.push({
-    no: 6,
-    kind: "issue",
-    kicker: "쟁점",
-    title: "갈리는 지점은 여기",
-    lines: issues.length ? issues : [summary[2] || summary[0]],
-    footer: "찬반이 갈리는 이유",
-  });
-  cards.push({
-    no: 7,
-    kind: "checklist",
-    kicker: "한 줄 정리",
-    title: "내 기준 체크리스트",
-    lines: [
-      "✔ 오늘 알아둘 것 — " + shorten(summary[0], 44),
-      "✔ 내게 미치는 영향 — " + shorten(impact, 44),
-      "✔ 다음에 확인할 것 — " + shorten(next, 44),
-    ],
-    footer: "저장해 두고 다시 보기",
-  });
-  cards.push({
-    no: 8,
-    kind: "cta",
-    kicker: "원문 보기",
-    title: "전체 기사는 첫 댓글에서",
-    lines: [
-      "프로필 링크 · 첫 댓글에 원문 링크를 달아 두었습니다.",
-      partnerUrl ? shorten(partnerUrl, 64) : "파트너 코드를 넣으면 내 뉴스픽 링크로 바뀝니다.",
-    ],
-    footer: tags.slice(0, 5).join(" "),
-  });
+  const byKind = {
+    cover: {
+      kind: "cover",
+      kicker: `${clean(article.site) || "뉴스픽"} · 오늘의 이슈`,
+      title: shorten(title, 42),
+      lines: [shorten(subtitle || summary[0], 62)],
+      footer: tags.slice(0, 3).join(" "),
+      badges: tags.slice(0, 3),
+    },
+    summary: {
+      kind: "summary",
+      kicker: "3줄 요약",
+      title: "한 번에 정리하면",
+      lines: summary.map((line) => "· " + line),
+      footer: "한 번에 정리",
+      badges: ["3줄 요약", clean(article.site) || "뉴스픽"],
+    },
+    background: {
+      kind: "background",
+      kicker: "배경",
+      title: "왜 지금 나온 이야기일까",
+      lines: background.length ? background : summary.slice(0, 2),
+      footer: "무슨 일이 있었나",
+      badges: ["배경", "맥락"],
+    },
+    numbers: {
+      kind: "numbers",
+      kicker: "숫자로 보기",
+      title: numbers.length ? "이 숫자만 보면 됩니다" : "핵심 수치",
+      lines: numbers.length ? numbers.map((item) => item.text) : summary.map((line) => line),
+      numbers,
+      footer: "기사에 나온 숫자 그대로",
+      badges: numbers.slice(0, 3).map((item) => item.highlight),
+    },
+    facts: {
+      kind: "facts",
+      kicker: "핵심 팩트",
+      title: count === 4 ? "핵심 숫자와 사실" : "놓치면 안 되는 사실",
+      lines: count === 4 && numbers.length ? numbers.map((item) => item.text) : facts.length ? facts : summary,
+      numbers: count === 4 ? numbers : [],
+      footer: "핵심 팩트 3",
+      badges: ["핵심", "팩트"],
+    },
+    detail: {
+      kind: "detail",
+      kicker: "디테일",
+      title: "숫자 뒤의 이야기",
+      lines: detail.length ? detail : facts.slice(0, 2),
+      footer: "한 걸음 더 들어가면",
+      badges: ["디테일", "맥락"],
+    },
+    issue: {
+      kind: "issue",
+      kicker: "쟁점",
+      title: "갈리는 지점은 여기",
+      lines: issues.length ? issues : [summary[2] || summary[0]],
+      footer: "찬반이 갈리는 이유",
+      badges: ["쟁점", "찬반"],
+    },
+    comparison: {
+      kind: "comparison",
+      kicker: "비교",
+      title: "달라지는 것 · 그대로인 것",
+      lines: [
+        "달라짐 — " + shorten(facts[0] || summary[0], 46),
+        "그대로 — " + shorten(issues[1] || issues[0] || summary[2], 46),
+        "다음 확인 — " + shorten(next, 46),
+      ],
+      footer: "무엇이 바뀌고 무엇이 남나",
+      badges: ["달라짐", "그대로"],
+    },
+    checklist: {
+      kind: "checklist",
+      kicker: "한 줄 정리",
+      title: "내 기준 체크리스트",
+      lines: [
+        "✔ 오늘 알아둘 것 — " + shorten(summary[0], 44),
+        "✔ 내게 미치는 영향 — " + shorten(impact, 44),
+        "✔ 다음에 확인할 것 — " + shorten(next, 44),
+      ],
+      footer: "저장해 두고 다시 보기",
+      badges: ["체크", "요약"],
+    },
+    cta: {
+      kind: "cta",
+      kicker: "원문 보기",
+      title: "전체 기사는 첫 댓글에서",
+      lines: [
+        "프로필 링크 · 첫 댓글에 원문 링크를 달아 두었습니다.",
+        partnerUrl ? shorten(partnerUrl, 64) : "파트너 코드를 넣으면 내 뉴스픽 링크로 바뀝니다.",
+      ],
+      footer: tags.slice(0, 5).join(" "),
+      badges: tags.slice(0, 3),
+    },
+  };
 
-  return cards.map((card) => ({ ...card, kindLabel: CARD_KINDS[card.no - 1] }));
+  return CARD_SEQUENCES[count].map((kind, index) => ({
+    ...byKind[kind],
+    no: index + 1,
+    index,
+    kindLabel: CARD_KIND_LABELS[kind] || kind,
+  }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -722,10 +775,16 @@ export function buildStoryboard(article, options = {}) {
   const partnerUrl = options.partnerUrl || article.partnerUrl || "";
   const hashtags = buildHashtags(article);
   const cuts = buildCuts(article, partnerUrl);
-  const cards = buildCards(article, partnerUrl, hashtags);
+  const cards = buildCards(article, partnerUrl, hashtags, { count: options.cardCount || 8 });
   const channels = buildChannels(article, cards, partnerUrl);
   return { cuts, cards, channels, hashtags, partnerUrl };
 }
+
+/* 4컷 이미지 소스 모드 */
+export const IMAGE_MODES = [
+  { id: "ai", name: "AI 알아서 생성", emoji: "✨", hint: "스타일에 맞춰 AI가 컷마다 새 이미지를 만듭니다." },
+  { id: "article", name: "기사 내 이미지 사용", emoji: "🖼️", hint: "기사 대표·본문 이미지를 컷에 배치하고, 모자란 컷은 AI/Canvas로 채웁니다." },
+];
 
 export function partnerLinkFor(article, partnerCode) {
   const code = clean(partnerCode);
