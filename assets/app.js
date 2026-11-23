@@ -753,6 +753,7 @@ function renderArticleImages() {
   panel.hidden = !images.length;
   const note = $("articleImageNote");
   if (note) note.textContent = images.length ? `${images.length}장 · 최대 8장` : "—";
+  const proxyTargets = [];
   images.forEach((url, index) => {
     const li = document.createElement("li");
     li.className = "article-image-item";
@@ -762,6 +763,7 @@ function renderArticleImages() {
     img.loading = "lazy";
     img.referrerPolicy = "no-referrer";
     img.addEventListener("error", () => img.classList.add("broken"));
+    proxyTargets.push({ img, url });
     const tools = document.createElement("div");
     tools.className = "article-image-tools";
     for (let cut = 1; cut <= 4; cut += 1) {
@@ -776,6 +778,17 @@ function renderArticleImages() {
     li.append(img, tools);
     list.appendChild(li);
   });
+  /* 핫링크로 깨지는 이미지는 이 사이트의 중계로 한 번 더 시도한다. */
+  for (const target of proxyTargets) {
+    api("/api/proxy-image?url=" + encodeURIComponent(target.url))
+      .then((result) => {
+        if (result.data && result.data.ok && result.data.dataUrl) {
+          target.img.src = result.data.dataUrl;
+          target.img.classList.remove("broken");
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 async function assignArticleImage(imageIndex, cutIndex) {

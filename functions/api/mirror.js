@@ -151,6 +151,7 @@ function makeArticle(input) {
   const uniqueBodyImages = [];
   for (const candidate of bodyImages) {
     if (!/^https?:/i.test(candidate)) continue;
+    if (/\{\{|%7B%7B|image_profile|noimg|default_|placeholder/i.test(candidate)) continue;
     if (uniqueBodyImages.includes(candidate)) continue;
     uniqueBodyImages.push(candidate);
     if (uniqueBodyImages.length >= 8) break;

@@ -175,6 +175,8 @@ export function htmlToParagraphs(html) {
  * ------------------------------------------------------------------ */
 
 const NOISE_ALWAYS = [
+  /^\[?APP\s*전용\s*콘텐츠\]?$/, /앱\s*다운로드/, /선착순\s*단가/, /더드림/, /포인트\s*소진/, /노출\s*시점/,
+  /^\d{1,2}\.\d{1,2}\s+\d{1,2}:\d{2}\s*[-~]/, /^[\d,.]+\s*\/\s*[\d,.]+$/,
   /^\[?(?:사진|자료사진|사진제공|이미지|영상|그래픽)\s*[=:=\]]/, /^\(사진\s*=/,
   /관련\s*기사/, /구독(?:하기|하고)/, /^제보\s*[:=]/,
   /^▶/, /^☞/, /^※/, /^\[?(?:앵커|리포트)\]/,
@@ -627,7 +629,7 @@ export function absoluteUrl(src, base) {
 }
 
 /** 본문 안의 <img> 주소를 모은다. (4컷 배경 후보 — 최대 limit 장) */
-const IMAGE_SKIP = /(?:logo|icon|blank|spacer|btn_|button|sprite|pixel|ad_|banner)/i;
+const IMAGE_SKIP = /(?:logo|icon|blank|spacer|btn_|button|sprite|pixel|ad_|banner|profile)/i;
 
 export function extractInlineImages(bodyHtml, base, limit = 8) {
   const out = [];
@@ -637,10 +639,11 @@ export function extractInlineImages(bodyHtml, base, limit = 8) {
     const tag = m[0];
     const srcMatch = /\b(?:data-src|data-original|data-lazy-src|src)\s*=\s*["']([^"']+)["']/i.exec(tag);
     if (!srcMatch) continue;
-    const url = absoluteUrl(srcMatch[1], base);
+    const url = decodeEntities(absoluteUrl(srcMatch[1], base));
     if (!/^https?:/i.test(url)) continue;
     if (/\.(gif|svg)(\?|$)/i.test(url)) continue;
     if (IMAGE_SKIP.test(url)) continue;
+    if (/\{\{|%7B%7B|image_profile|noimg|default_|placeholder/i.test(url)) continue;
     if (out.includes(url)) continue;
     out.push(url);
     if (out.length >= limit) break;

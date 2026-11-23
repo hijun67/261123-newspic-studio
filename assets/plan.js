@@ -232,6 +232,8 @@ export function finishSentence(value, max = 62) {
   s = s.replace(/^[·•\-–—]\s*/, "").replace(/^(?:다만|그러나|하지만|한편|이에|이처럼|결국)\s+/, "").trim();
   if (!s) return "";
   const limit = Math.max(18, Number(max) || 62);
+  /* 이미 완결된 물음·감춤말은 그대로 둔다. */
+  if (/[?!]$/.test(s)) return s.length <= limit ? s : shortTitle(s, limit);
   /* 여러 문장이면 첫 문장을 쓴다(두 문장을 붙여 이상한 끝이 되지 않게). */
   const parts = s.split(/(?<=[.!?])\s+/).filter(Boolean);
   if (parts.length > 1) return finishSentence(parts[0], limit);
@@ -413,13 +415,19 @@ export function keywordPromptLine(article, limit = 4) {
 }
 
 const NOISE = /(기사의 이해를 돕기 위한|기사 내용과 직접적인 연관|이미지로 기사 내용|사진은 기사 내용|자료사진|사진 ?[=:]|제공 ?[=:]|사진공동취재단|게티이미지|클립아트|무단 전재|재배포 금지|Copyright|ⓒ)/;
+/* 파트너스 기사에 붙는 프로모션·광고 문구 — 본문이 아니라 배너 텍스트다. */
+const PROMO_NOISE = /(선착순\s*단가|더드림|포인트\s*소진|소진\s*수량|안내\s*화면|노출\s*시점|쿠폰\s*다운|지금\s*구매|구매하러\s*가기|특가\s*할인|광고\s*문의|APP\s*전용\s*콘텐츠|앱\s*다운로드|신규\s*유저|지급된)/;
+const DATE_RANGE = /^\d{1,2}\.\d{1,2}\s+\d{1,2}:\d{2}\s*[-~]\s*\d{1,2}\.\d{1,2}/;
+const RATIO_NUM = /^[\d,.]+\s*\/\s*[\d,.]+$/;
 const BYLINE_ONLY = /^[가-힣]{2,4}\s*(?:기자|특파원|앵커|논설위원)$/;
 const EMAIL_ONLY = /^[\w.+-]+@[\w.-]+$/;
 
-/** 사진 설명·저작권 안내처럼 기사 내용이 아닌 줄 */
+/** 사진 설명·저작권·광고 안내처럼 기사 내용이 아닌 줄 */
 export function isNoiseLine(text) {
   const value = String(text || "").trim();
   if (BYLINE_ONLY.test(value) || EMAIL_ONLY.test(value)) return true;
+  if (DATE_RANGE.test(value) || RATIO_NUM.test(value)) return true;
+  if (value.length <= 60 && PROMO_NOISE.test(value)) return true;
   return NOISE.test(value);
 }
 
@@ -715,11 +723,43 @@ export function cutPrompt(cut, styleId, article) {
   return `${head}${shot}${subject}, ${scene}, ${style.prompt}, no text, no letters, no watermark, no logo, no caption, 16:9 composition`;
 }
 
+/** 본문이 배너뿐이거나 이미지 중심인 기사: 제목·키워드로 4컷/카드 문장을 만든다. */
+function withQuoteParticle(word) {
+  const last = [...String(word || "")].pop() || "";
+  const code = last ? last.charCodeAt(0) : 0;
+  const hasFinal = code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 !== 0;
+  return word + (hasFinal ? "이라는" : "라는");
+}
+
+function titleFallbackLines(article) {
+  const title = clean(article.title);
+  const keys = extractKeywords(article, 4).map((key) => key.ko);
+  const primary = keys[0] || "";
+  const lines = [finishSentence(title, 54)];
+  if (primary) lines.push(finishSentence(withQuoteParticle(primary) + " 키워드가 함께 눈에 띄어요", 54));
+  lines.push(finishSentence("사진과 이미지가 중심인 콘텐츠예요", 54));
+  lines.push(finishSentence("짧게 넘겨 보기 좋은 소식이에요", 54));
+  lines.push(finishSentence("자세한 내용은 원문에서 사진으로 확인해 보세요", 54));
+  return [...new Set(lines.filter(Boolean))];
+}
+
+/** 4컷 나레이션이 서로 겹치지 않게 4개를 채운다. */
+function uniqueLines(candidates, extras = []) {
+  const out = [];
+  const source = [...candidates, ...extras, "사진과 함께 보면 이해가 빨라요", "다음 소식도 이어서 살펴보세요"];
+  for (const item of source) {
+    if (!item || out.includes(item)) continue;
+    out.push(item);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
 export function buildCuts(article, partnerUrl = "") {
   const pool = sentencePool(article);
   const used = new Set();
   const ranked = scoreSentences(pool).map((item) => item.sentence);
-  const ordered = [...pool.slice(0, 2), ...ranked];
+  const ordered = pool.length ? [...pool.slice(0, 2), ...ranked] : titleFallbackLines(article);
   const subtitle = stripDateline(isNoiseLine(article.subtitle) ? "" : clean(article.subtitle));
   const keywords = extractKeywords(article, 4);
   const keywordPrompt = keywordPromptLine(article, 4);
@@ -729,16 +769,14 @@ export function buildCuts(article, partnerUrl = "") {
   const twistLine =
     pick(ordered, used, 1, (s) => isIssueSentence(s))[0] || pick(ordered, used, 1)[0] || factLine;
   const endLine =
-    pick(ordered, used, 1, (s) => /(계획|예정|전망|신청|확인|필요|중요|부터)/.test(s))[0] ||
+    pick(ordered, used, 1, (s) => /(계획|예정|전망|신청|확인|필요|중요|부터|보세요)/.test(s))[0] ||
     pick(ordered, used, 1)[0] ||
     twistLine;
 
-  const lines = [
-    hookLine,
-    finishSentence(factLine, 62),
-    finishSentence(twistLine, 62),
-    finishSentence(endLine, 62),
-  ];
+  const lines = uniqueLines(
+    [hookLine, finishSentence(factLine, 62), finishSentence(twistLine, 62), finishSentence(endLine, 62)],
+    pool.length ? [] : titleFallbackLines(article)
+  );
 
   return ROLE_META.map((meta, index) => {
     const line = lines[index];
@@ -748,7 +786,7 @@ export function buildCuts(article, partnerUrl = "") {
       role: meta.role,
       roleLabel: meta.label,
       narration: line,
-      dialogue: index === 0 ? finishSentence(subtitle || reaction, 46) : reaction,
+      dialogue: index === 0 && subtitle ? finishSentence(subtitle, 46) : reaction,
       speaker: meta.speaker,
       expression: meta.expression,
       visual: "",
@@ -834,7 +872,7 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
   const pool = sentencePool(article);
   const used = new Set();
   const ranked = scoreSentences(pool).map((item) => item.sentence);
-  const ordered = [...pool.slice(0, 3), ...ranked];
+  const ordered = pool.length ? [...pool.slice(0, 3), ...ranked] : titleFallbackLines(article);
   const tags = hashtags || buildHashtags(article);
   const title = clean(article.title);
   const subtitle = stripDateline(isNoiseLine(article.subtitle) ? "" : clean(article.subtitle));
@@ -846,6 +884,11 @@ export function buildCards(article, partnerUrl = "", hashtags = null, options = 
     if (sentence.length < 14) continue;
     used.add(sentence);
     summary.push(finishSentence(sentence, 54));
+  }
+  for (const line of [...titleFallbackLines(article), finishSentence(subtitle || title, 54)]) {
+    if (summary.length >= 3) break;
+    if (!line || summary.includes(line)) continue;
+    summary.push(line);
   }
   while (summary.length < 3) summary.push(finishSentence(subtitle || title, 54));
 
